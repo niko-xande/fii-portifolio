@@ -1,5 +1,5 @@
 ﻿services:
-  - type: static
+  - type: static_site
     name: fii-portfolio
     env: static
     buildCommand: npm ci && npm run build && npm run export
