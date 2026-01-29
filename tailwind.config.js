@@ -7,8 +7,7 @@ module.exports = {
         ink: "#0b0f19",
         moss: "#0f766e",
         sand: "#f6f4ef",
-        sun: "#f59e0b",
-        slate: "#0f172a"
+        sun: "#f59e0b"
       },
       boxShadow: {
         soft: "0 10px 30px rgba(15, 23, 42, 0.08)"
