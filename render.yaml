@@ -1,7 +1,7 @@
 ﻿services:
-  - type: static_site
+  - type: web
     name: fii-portfolio
-    env: static
+    runtime: static
     buildCommand: npm ci && npm run build && npm run export
     staticPublishPath: out
     envVars:
