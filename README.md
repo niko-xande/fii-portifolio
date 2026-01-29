@@ -43,13 +43,12 @@ A forma mais simples é gerar arquivos estáticos e usar **Render Static Site**:
 ```bash
 npm install
 npm run build
-npm run export
 ```
-Isso gera a pasta `out/` com HTML/CSS/JS estáticos.
+Isso gera a pasta `out/` com HTML/CSS/JS estáticos (por causa do `output: 'export'` no Next).
 
 **Deploy no Render (Static Site):**
 1. Crie um serviço **Static Site** no Render e conecte seu repositório.
-2. Build command: `npm install && npm run build && npm run export`
+2. Build command: `npm install && npm run build`
 3. Publish directory: `out`
 4. Configure as variáveis de ambiente no Render (Build Environment):
    - `NEXT_PUBLIC_SUPABASE_URL`

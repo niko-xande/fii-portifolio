@@ -1,4 +1,4 @@
-﻿# Exported from Render on 2026-01-29T23:34:33Z
+﻿# Render Blueprint
 version: "1"
 projects:
 - name: My project
@@ -9,10 +9,11 @@ projects:
       name: fii-portifolio
       runtime: static
       repo: https://github.com/niko-xande/fii-portifolio
+      buildCommand: npm ci && npm run build
+      staticPublishPath: out
       envVars:
       - key: NEXT_PUBLIC_SUPABASE_URL
         sync: false
       - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
         sync: false
-      staticPublishPath: fii-portifolio
       autoDeployTrigger: commit
