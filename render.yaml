@@ -1,11 +1,18 @@
-﻿services:
-  - type: web
-    name: fii-portfolio
-    runtime: static
-    buildCommand: npm ci && npm run build && npm run export
-    staticPublishPath: out
-    envVars:
+﻿# Exported from Render on 2026-01-29T23:34:33Z
+version: "1"
+projects:
+- name: My project
+  environments:
+  - name: Production
+    services:
+    - type: web
+      name: fii-portifolio
+      runtime: static
+      repo: https://github.com/niko-xande/fii-portifolio
+      envVars:
       - key: NEXT_PUBLIC_SUPABASE_URL
         sync: false
       - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
         sync: false
+      staticPublishPath: fii-portifolio
+      autoDeployTrigger: commit
