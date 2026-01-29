@@ -101,11 +101,11 @@ export default function CarteiraPage() {
   const handleSave = async (event: React.FormEvent) => {
     event.preventDefault();
 
-    const assetPayload = {
+    const assetPayload: Partial<Asset> = {
       id: form.id || undefined,
       ticker: form.ticker.toUpperCase(),
       name: form.name || null,
-      type: form.type || null,
+      type: (form.type as Asset["type"]) || null,
       sector: form.sector || null,
       notes: form.notes || null
     };
