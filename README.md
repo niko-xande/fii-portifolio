@@ -21,7 +21,7 @@ Sistema web para controle e análise de carteira de FIIs (Next.js + Supabase).
 4. Copie **Project URL** e **anon key** (Settings > API).
 
 ## 3) Variáveis de ambiente
-Crie `.env.local` na raiz:
+Crie `.env.local` na raiz (ou use `.env.example` como modelo):
 
 ```env
 NEXT_PUBLIC_SUPABASE_URL="https://SEU-PROJETO.supabase.co"
