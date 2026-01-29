@@ -60,7 +60,7 @@ export default function ExportarPage() {
       await upsertAsset(supabase, {
         ticker: row.ticker?.toUpperCase(),
         name: row.name || null,
-        type: row.type || null,
+        type: (row.type as Asset["type"]) || null,
         sector: row.sector || null,
         notes: row.notes || null,
         status: row.status || null
