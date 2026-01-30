@@ -121,13 +121,6 @@ export default function DashboardPage() {
       .map((month) => ({ month: formatMonth(month), value: groupedIncomes[month] }));
   }, [groupedIncomes]);
 
-  const incomeByAssetMonth = useMemo(() => {
-    return incomes.reduce<Record<string, Record<string, number>>>((acc, income) => {
-      acc[income.asset_id] = acc[income.asset_id] || {};
-      acc[income.asset_id][income.month] = (acc[income.asset_id][income.month] || 0) + Number(income.amount ?? 0);
-      return acc;
-    }, {});
-  }, [incomes]);
 
   const missingIncomeMonths = useMemo(() => {
     const missing: string[] = [];
