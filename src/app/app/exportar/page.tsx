@@ -2,16 +2,26 @@
 
 import { useEffect, useState } from "react";
 import { getSupabaseBrowser } from "@/lib/supabaseClient";
-import { fetchAssets, fetchPositions, fetchIncomes, upsertAsset, upsertPosition, upsertIncome } from "@/lib/db";
+import {
+  fetchAssets,
+  fetchPositions,
+  fetchIncomes,
+  fetchAssetCatalog,
+  upsertAsset,
+  upsertAssetCatalog,
+  upsertPosition,
+  upsertIncome
+} from "@/lib/db";
 import { LoadingState, ErrorState } from "@/components/State";
 import { buildCsv, parseCsv } from "@/utils/csv";
-import type { Asset, Income, Position } from "@/types";
+import type { Asset, Income, Position, AssetCatalog } from "@/types";
 
 export default function ExportarPage() {
   const supabase = getSupabaseBrowser();
   const [assets, setAssets] = useState<Asset[]>([]);
   const [positions, setPositions] = useState<Position[]>([]);
   const [incomes, setIncomes] = useState<Income[]>([]);
+  const [catalog, setCatalog] = useState<AssetCatalog[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -19,16 +29,26 @@ export default function ExportarPage() {
   const load = async () => {
     setLoading(true);
     setError(null);
-    const [{ data: assetsData, error: assetsError }, { data: positionsData, error: positionsError }, { data: incomesData, error: incomesError }] =
-      await Promise.all([fetchAssets(supabase), fetchPositions(supabase), fetchIncomes(supabase)]);
+    const [
+      { data: assetsData, error: assetsError },
+      { data: positionsData, error: positionsError },
+      { data: incomesData, error: incomesError },
+      { data: catalogData, error: catalogError }
+    ] = await Promise.all([
+      fetchAssets(supabase),
+      fetchPositions(supabase),
+      fetchIncomes(supabase),
+      fetchAssetCatalog(supabase)
+    ]);
 
-    if (assetsError || positionsError || incomesError) {
+    if (assetsError || positionsError || incomesError || catalogError) {
       setError("Não foi possível carregar os dados.");
     }
 
     setAssets(assetsData ?? []);
     setPositions(positionsData ?? []);
     setIncomes(incomesData ?? []);
+    setCatalog(catalogData ?? []);
     setLoading(false);
   };
 
@@ -51,6 +71,7 @@ export default function ExportarPage() {
     downloadCsv("ativos.csv", assets);
     downloadCsv("posicoes.csv", positions);
     downloadCsv("rendimentos.csv", incomes);
+    downloadCsv("catalogo.csv", catalog);
   };
 
   const importAssets = async (file: File) => {
@@ -66,6 +87,32 @@ export default function ExportarPage() {
         status: row.status || null
       });
     }
+  };
+
+  const importCatalog = async (file: File) => {
+    const text = await file.text();
+    const rows = parseCsv(text);
+    for (const row of rows) {
+      await upsertAssetCatalog(supabase, {
+        ticker: row.ticker?.toUpperCase(),
+        name: row.name || null,
+        type: (row.type as AssetCatalog["type"]) || null,
+        sector: row.sector || null
+      });
+    }
+  };
+
+  const syncCatalogFromAssets = async () => {
+    for (const asset of assets) {
+      await upsertAssetCatalog(supabase, {
+        ticker: asset.ticker,
+        name: asset.name || null,
+        type: asset.type || null,
+        sector: asset.sector || null
+      });
+    }
+    await load();
+    setMessage("Catálogo sincronizado com seus ativos.");
   };
 
   const importPositions = async (file: File) => {
@@ -99,13 +146,17 @@ export default function ExportarPage() {
     }
   };
 
-  const handleImport = async (event: React.ChangeEvent<HTMLInputElement>, type: "assets" | "positions" | "incomes") => {
+  const handleImport = async (
+    event: React.ChangeEvent<HTMLInputElement>,
+    type: "assets" | "positions" | "incomes" | "catalog"
+  ) => {
     const file = event.target.files?.[0];
     if (!file) return;
     setMessage(null);
     if (type === "assets") await importAssets(file);
     if (type === "positions") await importPositions(file);
     if (type === "incomes") await importIncomes(file);
+    if (type === "catalog") await importCatalog(file);
     await load();
     setMessage("Importação concluída.");
   };
@@ -156,6 +207,28 @@ export default function ExportarPage() {
             Selecionar arquivo
             <input type="file" accept=".csv" className="hidden" onChange={(event) => handleImport(event, "incomes")} />
           </label>
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="card">
+          <div className="card-body space-y-3">
+            <p className="text-sm font-semibold text-slate-900">Importar catálogo</p>
+            <label className="btn btn-ghost w-full cursor-pointer">
+              Selecionar arquivo
+              <input type="file" accept=".csv" className="hidden" onChange={(event) => handleImport(event, "catalog")} />
+            </label>
+            <p className="text-xs text-slate-500">CSV com colunas: ticker, name, type, sector.</p>
+          </div>
+        </div>
+        <div className="card">
+          <div className="card-body space-y-3">
+            <p className="text-sm font-semibold text-slate-900">Sincronizar catálogo</p>
+            <button className="btn btn-ghost w-full" onClick={syncCatalogFromAssets}>
+              Usar meus ativos atuais
+            </button>
+            <p className="text-xs text-slate-500">Gera o catálogo com base nos ativos já cadastrados.</p>
+          </div>
         </div>
       </div>
 

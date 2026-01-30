@@ -67,3 +67,13 @@ export interface MarketQuote {
   source: string | null;
   created_at: string;
 }
+
+export interface AssetCatalog {
+  id: string;
+  user_id: string;
+  ticker: string;
+  name: string | null;
+  type: AssetType | null;
+  sector: string | null;
+  created_at: string;
+}

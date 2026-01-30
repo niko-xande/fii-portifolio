@@ -2,12 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { getSupabaseBrowser } from "@/lib/supabaseClient";
-import { fetchAssets, fetchPositions, upsertAsset, upsertPosition, deleteAsset } from "@/lib/db";
+import { fetchAssets, fetchPositions, fetchAssetCatalog, upsertAsset, upsertAssetCatalog, upsertPosition, deleteAsset } from "@/lib/db";
 import { formatCurrency } from "@/lib/format";
 import { Modal } from "@/components/Modal";
 import { ResponsiveTable } from "@/components/ResponsiveTable";
 import { LoadingState, ErrorState } from "@/components/State";
-import type { Asset, Position } from "@/types";
+import type { Asset, Position, AssetCatalog } from "@/types";
 
 interface AssetWithPosition extends Asset {
   position?: Position | null;
@@ -31,6 +31,7 @@ export default function CarteiraPage() {
   const supabase = getSupabaseBrowser();
   const [assets, setAssets] = useState<Asset[]>([]);
   const [positions, setPositions] = useState<Position[]>([]);
+  const [catalog, setCatalog] = useState<AssetCatalog[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -40,15 +41,19 @@ export default function CarteiraPage() {
   const load = async () => {
     setLoading(true);
     setError(null);
-    const [{ data: assetsData, error: assetsError }, { data: positionsData, error: positionsError }] =
-      await Promise.all([fetchAssets(supabase), fetchPositions(supabase)]);
+    const [
+      { data: assetsData, error: assetsError },
+      { data: positionsData, error: positionsError },
+      { data: catalogData, error: catalogError }
+    ] = await Promise.all([fetchAssets(supabase), fetchPositions(supabase), fetchAssetCatalog(supabase)]);
 
-    if (assetsError || positionsError) {
+    if (assetsError || positionsError || catalogError) {
       setError("Não foi possível carregar a carteira.");
     }
 
     setAssets(assetsData ?? []);
     setPositions(positionsData ?? []);
+    setCatalog(catalogData ?? []);
     setLoading(false);
   };
 
@@ -98,6 +103,26 @@ export default function CarteiraPage() {
     setModalOpen(true);
   };
 
+  const catalogMap = useMemo(() => {
+    return catalog.reduce<Record<string, AssetCatalog>>((acc, item) => {
+      acc[item.ticker.toUpperCase()] = item;
+      return acc;
+    }, {});
+  }, [catalog]);
+
+  const applyCatalogMatch = (value: string) => {
+    const ticker = value.toUpperCase();
+    const match = catalogMap[ticker];
+    if (!match) return;
+    setForm((prev) => ({
+      ...prev,
+      ticker,
+      name: prev.name || match.name || "",
+      type: prev.type || match.type || "tijolo",
+      sector: prev.sector || match.sector || ""
+    }));
+  };
+
   const handleSave = async (event: React.FormEvent) => {
     event.preventDefault();
 
@@ -115,6 +140,13 @@ export default function CarteiraPage() {
       setError(assetError?.message || "Erro ao salvar ativo.");
       return;
     }
+
+    await upsertAssetCatalog(supabase, {
+      ticker: assetPayload.ticker,
+      name: assetPayload.name ?? null,
+      type: assetPayload.type ?? null,
+      sector: assetPayload.sector ?? null
+    });
 
     if (form.quantity && form.avg_price) {
       const positionPayload = {
@@ -241,9 +273,22 @@ export default function CarteiraPage() {
               <input
                 className="input mt-1"
                 value={form.ticker}
-                onChange={(event) => setForm((prev) => ({ ...prev, ticker: event.target.value }))}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setForm((prev) => ({ ...prev, ticker: value }));
+                  applyCatalogMatch(value);
+                }}
+                onBlur={(event) => applyCatalogMatch(event.target.value)}
+                list="catalog-tickers"
                 required
               />
+              <datalist id="catalog-tickers">
+                {catalog.map((item) => (
+                  <option key={item.id} value={item.ticker}>
+                    {item.name ?? ""}
+                  </option>
+                ))}
+              </datalist>
             </div>
             <div>
               <label className="text-xs font-semibold text-slate-600">Nome</label>

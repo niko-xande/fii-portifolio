@@ -88,6 +88,10 @@ Resumo rápido:
   - `BRAPI_BASE_URL` (opcional)
 - Agende execução diária via `pg_cron` + `pg_net` (exemplo em `supabase/functions/update-market-quotes/README.md`)
 
+## 9) Catálogo de ativos (autocomplete)
+Para facilitar o cadastro, o app usa um **catálogo de ativos** por usuário.
+Você pode importar um CSV com colunas `ticker,name,type,sector` ou gerar o catálogo a partir dos seus ativos atuais na tela **Exportar**.
+
 ## Estrutura do projeto
 - `src/app` – Rotas (App Router)
 - `src/components` – Componentes UI
