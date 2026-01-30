@@ -90,7 +90,7 @@ Resumo rápido:
 
 ## 9) Catálogo de ativos (autocomplete)
 Para facilitar o cadastro, o app usa um **catálogo de ativos** por usuário.
-Você pode importar um CSV com colunas `ticker,name,type,sector` ou gerar o catálogo a partir dos seus ativos atuais na tela **Exportar**.
+Você pode importar um CSV com colunas `ticker,name,type,sector,ref_price` ou gerar o catálogo a partir dos seus ativos atuais na tela **Exportar**.
 
 ## Estrutura do projeto
 - `src/app` – Rotas (App Router)

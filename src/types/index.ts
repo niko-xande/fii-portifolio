@@ -75,5 +75,6 @@ export interface AssetCatalog {
   name: string | null;
   type: AssetType | null;
   sector: string | null;
+  ref_price: number | null;
   created_at: string;
 }

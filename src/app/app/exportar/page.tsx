@@ -97,7 +97,8 @@ export default function ExportarPage() {
         ticker: row.ticker?.toUpperCase(),
         name: row.name || null,
         type: (row.type as AssetCatalog["type"]) || null,
-        sector: row.sector || null
+        sector: row.sector || null,
+        ref_price: row.ref_price ? Number(row.ref_price) : null
       });
     }
   };
@@ -218,7 +219,7 @@ export default function ExportarPage() {
               Selecionar arquivo
               <input type="file" accept=".csv" className="hidden" onChange={(event) => handleImport(event, "catalog")} />
             </label>
-            <p className="text-xs text-slate-500">CSV com colunas: ticker, name, type, sector.</p>
+            <p className="text-xs text-slate-500">CSV com colunas: ticker, name, type, sector, ref_price.</p>
           </div>
         </div>
         <div className="card">

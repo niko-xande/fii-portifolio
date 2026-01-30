@@ -110,6 +110,12 @@ export default function CarteiraPage() {
     }, {});
   }, [catalog]);
 
+  const selectedCatalog = useMemo(() => {
+    const ticker = form.ticker?.toUpperCase();
+    if (!ticker) return null;
+    return catalogMap[ticker] ?? null;
+  }, [form.ticker, catalogMap]);
+
   const applyCatalogMatch = (value: string) => {
     const ticker = value.toUpperCase();
     const match = catalogMap[ticker];
@@ -289,6 +295,23 @@ export default function CarteiraPage() {
                   </option>
                 ))}
               </datalist>
+              {selectedCatalog?.ref_price ? (
+                <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
+                  <span>Preço referência: {formatCurrency(selectedCatalog.ref_price)}</span>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() =>
+                      setForm((prev) => ({
+                        ...prev,
+                        avg_price: prev.avg_price || selectedCatalog.ref_price?.toString() || ""
+                      }))
+                    }
+                  >
+                    Usar como preço médio
+                  </button>
+                </div>
+              ) : null}
             </div>
             <div>
               <label className="text-xs font-semibold text-slate-600">Nome</label>
