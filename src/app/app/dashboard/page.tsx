@@ -2,15 +2,48 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { getSupabaseBrowser } from "@/lib/supabaseClient";
-import { fetchAssets, fetchIncomes, fetchPositions, fetchSettings } from "@/lib/db";
+import { fetchAssets, fetchIncomes, fetchPositions, fetchSettings, fetchMarketQuotes, fetchValuations } from "@/lib/db";
 import { KpiCard } from "@/components/KpiCard";
 import { LoadingState, ErrorState, EmptyState } from "@/components/State";
+import { ResponsiveTable } from "@/components/ResponsiveTable";
 import { formatCurrency, formatMonth, formatPercent } from "@/lib/format";
-import { calcAvgIncome, calcConcentrationByAsset, calcIncomeDrop, calcInvestedValue, groupIncomesByMonth } from "@/utils/calculations";
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid } from "recharts";
-import type { Asset, Income, Position, Settings } from "@/types";
+import {
+  calcAvgIncome,
+  calcConcentrationByAsset,
+  calcIncomeDrop,
+  calcInvestedValue,
+  calcOpportunityScore,
+  groupIncomesByMonth
+} from "@/utils/calculations";
+import {
+  PieChart,
+  Pie,
+  Cell,
+  Tooltip,
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  BarChart,
+  Bar,
+  Legend
+} from "recharts";
+import type { Asset, Income, Position, Settings, MarketQuote, Valuation } from "@/types";
 
 const COLORS = ["#0f766e", "#f59e0b", "#475569", "#e11d48", "#0ea5e9", "#f97316"];
+
+interface AssetDashboardRow extends Asset {
+  invested: number;
+  marketValue: number | null;
+  marketPrice: number | null;
+  priceGap: number | null;
+  dy12m: number;
+  score: number | null;
+  signal: "oportunidade" | "neutro" | "risco" | "sem dados";
+  quote?: MarketQuote;
+}
 
 export default function DashboardPage() {
   const supabase = getSupabaseBrowser();
@@ -18,6 +51,8 @@ export default function DashboardPage() {
   const [positions, setPositions] = useState<Position[]>([]);
   const [incomes, setIncomes] = useState<Income[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [quotes, setQuotes] = useState<MarketQuote[]>([]);
+  const [valuations, setValuations] = useState<Valuation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -25,14 +60,23 @@ export default function DashboardPage() {
     const load = async () => {
       setLoading(true);
       setError(null);
-      const [{ data: assetsData, error: assetsError }, { data: positionsData, error: positionsError }, { data: incomesData, error: incomesError }, { data: settingsData, error: settingsError }] = await Promise.all([
+      const [
+        { data: assetsData, error: assetsError },
+        { data: positionsData, error: positionsError },
+        { data: incomesData, error: incomesError },
+        { data: settingsData, error: settingsError },
+        { data: quotesData, error: quotesError },
+        { data: valuationsData, error: valuationsError }
+      ] = await Promise.all([
         fetchAssets(supabase),
         fetchPositions(supabase),
         fetchIncomes(supabase),
-        fetchSettings(supabase)
+        fetchSettings(supabase),
+        fetchMarketQuotes(supabase),
+        fetchValuations(supabase)
       ]);
 
-      if (assetsError || positionsError || incomesError || settingsError) {
+      if (assetsError || positionsError || incomesError || settingsError || quotesError || valuationsError) {
         setError("Não foi possível carregar o dashboard. Tente novamente.");
       }
 
@@ -40,8 +84,11 @@ export default function DashboardPage() {
       setPositions(positionsData ?? []);
       setIncomes(incomesData ?? []);
       setSettings(settingsData ?? null);
+      setQuotes(quotesData ?? []);
+      setValuations(valuationsData ?? []);
       setLoading(false);
     };
+
     load();
   }, [supabase]);
 
@@ -81,6 +128,43 @@ export default function DashboardPage() {
     }, {});
   }, [assets]);
 
+  const positionMap = useMemo(() => {
+    return positions.reduce<Record<string, Position>>((acc, pos) => {
+      acc[pos.asset_id] = pos;
+      return acc;
+    }, {});
+  }, [positions]);
+
+  const incomeByAssetMonth = useMemo(() => {
+    return incomes.reduce<Record<string, Record<string, number>>>((acc, income) => {
+      acc[income.asset_id] = acc[income.asset_id] || {};
+      acc[income.asset_id][income.month] = (acc[income.asset_id][income.month] || 0) + Number(income.amount ?? 0);
+      return acc;
+    }, {});
+  }, [incomes]);
+
+  const latestQuoteMap = useMemo(() => {
+    return quotes.reduce<Record<string, MarketQuote>>((acc, quote) => {
+      const existing = acc[quote.asset_id];
+      if (!existing || quote.date > existing.date) acc[quote.asset_id] = quote;
+      return acc;
+    }, {});
+  }, [quotes]);
+
+  const latestValuationMap = useMemo(() => {
+    return valuations.reduce<Record<string, Valuation>>((acc, valuation) => {
+      const existing = acc[valuation.asset_id];
+      if (!existing) {
+        acc[valuation.asset_id] = valuation;
+      } else {
+        const existingDate = existing.date || existing.created_at;
+        const newDate = valuation.date || valuation.created_at;
+        if (newDate > existingDate) acc[valuation.asset_id] = valuation;
+      }
+      return acc;
+    }, {});
+  }, [valuations]);
+
   const concentration = calcConcentrationByAsset(positions);
 
   const concentrationData = Object.entries(concentration)
@@ -101,6 +185,85 @@ export default function DashboardPage() {
     name,
     value: investedValue ? value / investedValue : 0
   }));
+
+  const dashboardRows = useMemo<AssetDashboardRow[]>(() => {
+    return assets.map((asset) => {
+      const pos = positionMap[asset.id];
+      const invested = pos ? Number(pos.quantity) * Number(pos.avg_price) + Number(pos.costs ?? 0) : 0;
+      const quote = latestQuoteMap[asset.id];
+      const valuation = latestValuationMap[asset.id];
+      const marketPrice = quote?.price ?? null;
+      const marketValue = marketPrice && pos ? Number(pos.quantity) * Number(marketPrice) : null;
+      const priceGap = marketValue !== null && invested ? (marketValue - invested) / invested : null;
+
+      const monthsSorted = incomeByAssetMonth[asset.id] ? Object.keys(incomeByAssetMonth[asset.id]).sort() : [];
+      const last12 = monthsSorted.slice(-12);
+      const income12m = last12.reduce((sum, month) => sum + (incomeByAssetMonth[asset.id]?.[month] || 0), 0);
+      const dy12m = invested ? income12m / invested : 0;
+
+      const position52 =
+        quote?.price && quote.week_52_high && quote.week_52_low && quote.week_52_high !== quote.week_52_low
+          ? (Number(quote.price) - Number(quote.week_52_low)) /
+            (Number(quote.week_52_high) - Number(quote.week_52_low))
+          : null;
+
+      const score = calcOpportunityScore({
+        dy12m,
+        pvp: valuation?.p_vp ?? null,
+        position52
+      });
+
+      let signal: AssetDashboardRow["signal"] = "sem dados";
+      if (score !== null && score !== undefined) {
+        if (score >= 70) signal = "oportunidade";
+        else if (score <= 40) signal = "risco";
+        else signal = "neutro";
+      }
+
+      return {
+        ...asset,
+        invested,
+        marketValue,
+        marketPrice,
+        priceGap,
+        dy12m,
+        score,
+        signal,
+        quote
+      };
+    });
+  }, [assets, positionMap, latestQuoteMap, latestValuationMap, incomeByAssetMonth]);
+
+  const movers = useMemo(() => {
+    return dashboardRows
+      .filter((row) => row.quote?.change_percent !== null && row.quote?.change_percent !== undefined)
+      .map((row) => ({
+        ticker: row.ticker,
+        changePercent: Number(row.quote?.change_percent ?? 0),
+        price: row.marketPrice
+      }));
+  }, [dashboardRows]);
+
+  const topGainers = [...movers].sort((a, b) => b.changePercent - a.changePercent).slice(0, 5);
+  const topLosers = [...movers].sort((a, b) => a.changePercent - b.changePercent).slice(0, 5);
+
+  const marketValueTotal = dashboardRows.reduce((sum, row) => sum + (row.marketValue ?? 0), 0);
+  const marketDelta = marketValueTotal - investedValue;
+  const marketDeltaPct = investedValue ? marketDelta / investedValue : 0;
+
+  const marketChartData = dashboardRows
+    .filter((row) => row.invested > 0)
+    .slice(0, 8)
+    .map((row) => ({
+      ticker: row.ticker,
+      custo: row.invested,
+      mercado: row.marketValue ?? 0
+    }));
+
+  const lastQuoteDate = useMemo(() => {
+    const dates = Object.values(latestQuoteMap).map((quote) => quote.date);
+    return dates.sort().slice(-1)[0] || "";
+  }, [latestQuoteMap]);
 
   const maxAssetPct = Math.max(...Object.values(concentration), 0);
   const incomeDrop = calcIncomeDrop(incomes, 3);
@@ -131,8 +294,22 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
+      <div className="flex flex-col gap-1">
+        <h2 className="text-xl font-semibold text-slate-900">Dashboard</h2>
+        <p className="text-sm text-slate-500">
+          Última atualização de mercado: {lastQuoteDate || "manual"}.
+        </p>
+      </div>
+
       <div className="grid gap-4 md:grid-cols-4">
         <KpiCard title="Patrimônio investido" value={formatCurrency(investedValue)} />
+        <KpiCard title="Valor de mercado" value={formatCurrency(marketValueTotal)} />
+        <KpiCard
+          title="Resultado não realizado"
+          value={formatCurrency(marketDelta)}
+          subtitle={formatPercent(marketDeltaPct)}
+          accent={marketDelta >= 0 ? "success" : "danger"}
+        />
         <KpiCard title="Renda mensal" value={formatCurrency(lastMonthIncome)} subtitle="Último mês" />
         <KpiCard title="Média 6 meses" value={formatCurrency(avg6)} />
         <KpiCard
@@ -140,6 +317,69 @@ export default function DashboardPage() {
           value={formatPercent(progressToGoal)}
           subtitle={`Meta: ${formatCurrency(settings?.goal_amount ?? 100000)}`}
         />
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <div className="card">
+          <div className="card-header">
+            <h3 className="text-sm font-semibold text-slate-900">Custo x mercado</h3>
+            <span className="text-xs text-slate-500">Top 8 ativos</span>
+          </div>
+          <div className="card-body h-72">
+            {marketChartData.length ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={marketChartData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="ticker" />
+                  <YAxis />
+                  <Tooltip formatter={(value) => formatCurrency(Number(value))} />
+                  <Legend />
+                  <Bar dataKey="custo" fill="#0f172a" radius={[6, 6, 0, 0]} />
+                  <Bar dataKey="mercado" fill="#0f766e" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="text-sm text-slate-500">Sem dados de mercado suficientes.</div>
+            )}
+          </div>
+        </div>
+        <div className="card">
+          <div className="card-header">
+            <h3 className="text-sm font-semibold text-slate-900">Maiores altas e baixas</h3>
+          </div>
+          <div className="card-body grid gap-4 md:grid-cols-2">
+            <div>
+              <p className="text-xs font-semibold text-slate-500">Altas</p>
+              <div className="mt-2 space-y-2 text-sm">
+                {topGainers.length ? (
+                  topGainers.map((item) => (
+                    <div key={item.ticker} className="flex items-center justify-between">
+                      <span>{item.ticker}</span>
+                      <span className="text-emerald-600">{formatPercent(item.changePercent / 100)}</span>
+                    </div>
+                  ))
+                ) : (
+                  <span className="text-slate-500">Sem dados.</span>
+                )}
+              </div>
+            </div>
+            <div>
+              <p className="text-xs font-semibold text-slate-500">Baixas</p>
+              <div className="mt-2 space-y-2 text-sm">
+                {topLosers.length ? (
+                  topLosers.map((item) => (
+                    <div key={item.ticker} className="flex items-center justify-between">
+                      <span>{item.ticker}</span>
+                      <span className="text-rose-600">{formatPercent(item.changePercent / 100)}</span>
+                    </div>
+                  ))
+                ) : (
+                  <span className="text-slate-500">Sem dados.</span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -209,6 +449,61 @@ export default function DashboardPage() {
           <div className="card-body space-y-2 text-sm text-slate-600">
             {alerts.length ? alerts.map((alert) => <div key={alert}>• {alert}</div>) : "Tudo em ordem."}
           </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-header">
+          <h3 className="text-sm font-semibold text-slate-900">Sinais por ativo</h3>
+          <span className="text-xs text-slate-500">Indicadores heurísticos</span>
+        </div>
+        <div className="card-body">
+          <ResponsiveTable
+            data={dashboardRows}
+            emptyLabel="Sem ativos para analisar."
+            columns={[
+              { key: "ticker", label: "Ticker" },
+              {
+                key: "marketPrice",
+                label: "Preço",
+                render: (row) => (row.marketPrice ? formatCurrency(row.marketPrice) : "-")
+              },
+              {
+                key: "invested",
+                label: "Custo",
+                render: (row) => formatCurrency(row.invested)
+              },
+              {
+                key: "priceGap",
+                label: "Diferença",
+                render: (row) =>
+                  row.priceGap !== null && row.priceGap !== undefined ? formatPercent(row.priceGap) : "-"
+              },
+              {
+                key: "dy12m",
+                label: "DY 12m",
+                render: (row) => formatPercent(row.dy12m)
+              },
+              {
+                key: "score",
+                label: "Score",
+                render: (row) => (row.score !== null && row.score !== undefined ? `${row.score}` : "-")
+              },
+              {
+                key: "signal",
+                label: "Sinal",
+                render: (row) => {
+                  const badge =
+                    row.signal === "oportunidade"
+                      ? "badge-success"
+                      : row.signal === "risco"
+                      ? "badge-danger"
+                      : "badge-warning";
+                  return <span className={`badge ${badge}`}>{row.signal}</span>;
+                }
+              }
+            ]}
+          />
         </div>
       </div>
     </div>
