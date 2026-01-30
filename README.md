@@ -92,6 +92,10 @@ Resumo rápido:
 Para facilitar o cadastro, o app usa um **catálogo de ativos** por usuário.
 Você pode importar um CSV com colunas `ticker,name,type,sector,ref_price` ou gerar o catálogo a partir dos seus ativos atuais na tela **Exportar**.
 
+## 10) Fundamentos e alertas
+No painel **Análises**, é possível registrar dados fundamentais (vacância, WAULT, dívida, liquidez).
+Esses dados alimentam os **scores de renda/estabilidade/risco** e os alertas do dashboard.
+
 ## Estrutura do projeto
 - `src/app` – Rotas (App Router)
 - `src/components` – Componentes UI

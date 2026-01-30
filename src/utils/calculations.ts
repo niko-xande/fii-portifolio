@@ -60,6 +60,89 @@ export const calcIncomeDrop = (incomes: Income[], months: number) => {
   return (avgPrev - last) / avgPrev;
 };
 
+export const getRecentMonths = (count: number, baseDate = new Date()) => {
+  const months: string[] = [];
+  for (let i = count - 1; i >= 0; i -= 1) {
+    const date = new Date(baseDate.getFullYear(), baseDate.getMonth() - i, 1);
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+    months.push(key);
+  }
+  return months;
+};
+
+export const calcStabilityScore = (values: number[]) => {
+  if (!values.length) return null;
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  if (!mean) return 0;
+  const variance = values.reduce((sum, value) => sum + Math.pow(value - mean, 2), 0) / values.length;
+  const std = Math.sqrt(variance);
+  const cv = std / mean;
+  const normalized = Math.max(0, Math.min(1, 1 - cv));
+  return Math.round(normalized * 100);
+};
+
+export const calcRiskScore = ({
+  vacancyFinancial,
+  vacancyPhysical,
+  debtRatio,
+  liquidityDaily
+}: {
+  vacancyFinancial?: number | null;
+  vacancyPhysical?: number | null;
+  debtRatio?: number | null;
+  liquidityDaily?: number | null;
+}) => {
+  const weights = {
+    vacancy: 0.4,
+    debt: 0.3,
+    liquidity: 0.3
+  };
+
+  const vacancyAvg =
+    vacancyFinancial !== null && vacancyFinancial !== undefined
+      ? vacancyFinancial
+      : vacancyPhysical !== null && vacancyPhysical !== undefined
+      ? vacancyPhysical
+      : null;
+  const vacancyScore = vacancyAvg !== null ? Math.max(0, 1 - vacancyAvg) : null;
+
+  const debtScore = debtRatio !== null && debtRatio !== undefined ? Math.max(0, 1 - debtRatio) : null;
+
+  const liquidityScore =
+    liquidityDaily !== null && liquidityDaily !== undefined
+      ? Math.min(1, Math.max(0, liquidityDaily / 1_000_000))
+      : null;
+
+  const weightedParts: Array<[number, number]> = [];
+  if (vacancyScore !== null) weightedParts.push([vacancyScore, weights.vacancy]);
+  if (debtScore !== null) weightedParts.push([debtScore, weights.debt]);
+  if (liquidityScore !== null) weightedParts.push([liquidityScore, weights.liquidity]);
+
+  if (!weightedParts.length) return null;
+  const totalWeight = weightedParts.reduce((sum, [, weight]) => sum + weight, 0);
+  const score = weightedParts.reduce((sum, [value, weight]) => sum + value * weight, 0) / totalWeight;
+  return Math.round(score * 100);
+};
+
+export const calcCompositeScore = ({
+  renda,
+  estabilidade,
+  risco
+}: {
+  renda: number | null;
+  estabilidade: number | null;
+  risco: number | null;
+}) => {
+  const parts: Array<[number, number]> = [];
+  if (renda !== null) parts.push([renda, 0.4]);
+  if (estabilidade !== null) parts.push([estabilidade, 0.3]);
+  if (risco !== null) parts.push([risco, 0.3]);
+  if (!parts.length) return null;
+  const totalWeight = parts.reduce((sum, [, weight]) => sum + weight, 0);
+  const score = parts.reduce((sum, [value, weight]) => sum + value * weight, 0) / totalWeight;
+  return Math.round(score);
+};
+
 export const calcOpportunityScore = ({
   dy12m,
   pvp,

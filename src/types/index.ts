@@ -50,6 +50,8 @@ export interface Settings {
   goal_amount: number;
   alert_max_asset_pct: number;
   alert_income_drop_pct: number;
+  alert_vacancy_pct: number;
+  alert_asset_dy_drop_pct: number;
   created_at: string;
 }
 
@@ -77,4 +79,18 @@ export interface AssetCatalog {
   sector: string | null;
   ref_price: number | null;
   created_at: string;
+}
+
+export interface Fundamentals {
+  id: string;
+  user_id: string;
+  asset_id: string;
+  vacancy_physical: number | null;
+  vacancy_financial: number | null;
+  wault_years: number | null;
+  debt_ratio: number | null;
+  liquidity_daily: number | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
 }

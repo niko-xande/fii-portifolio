@@ -2,24 +2,50 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { getSupabaseBrowser } from "@/lib/supabaseClient";
-import { fetchAssets, fetchIncomes, fetchPositions, fetchValuations, fetchMarketQuotes, upsertAsset, upsertValuation } from "@/lib/db";
+import {
+  fetchAssets,
+  fetchFundamentals,
+  fetchIncomes,
+  fetchMarketQuotes,
+  fetchPositions,
+  fetchSettings,
+  fetchValuations,
+  upsertAsset,
+  upsertFundamentals,
+  upsertValuation
+} from "@/lib/db";
 import { formatCurrency, formatPercent } from "@/lib/format";
 import { Modal } from "@/components/Modal";
 import { ResponsiveTable } from "@/components/ResponsiveTable";
 import { LoadingState, ErrorState } from "@/components/State";
-import { calcOpportunityScore, groupIncomesByMonth } from "@/utils/calculations";
-import type { Asset, Income, Position, Valuation, MarketQuote } from "@/types";
+import {
+  calcCompositeScore,
+  calcRiskScore,
+  calcStabilityScore,
+  getRecentMonths,
+  groupIncomesByMonth
+} from "@/utils/calculations";
+import type { Asset, Fundamentals, Income, MarketQuote, Position, Settings, Valuation } from "@/types";
 
 const emptyForm = {
   valuation_id: "",
+  fundamentals_id: "",
   asset_id: "",
   price: "",
   vp_per_share: "",
   p_vp: "",
   status: "ok",
   notes: "",
-  date: ""
+  date: "",
+  vacancy_physical: "",
+  vacancy_financial: "",
+  wault_years: "",
+  debt_ratio: "",
+  liquidity_daily: "",
+  fundamentals_notes: ""
 };
+
+const rendaTarget = 0.12;
 
 export default function AnalisesPage() {
   const supabase = getSupabaseBrowser();
@@ -28,24 +54,44 @@ export default function AnalisesPage() {
   const [incomes, setIncomes] = useState<Income[]>([]);
   const [valuations, setValuations] = useState<Valuation[]>([]);
   const [quotes, setQuotes] = useState<MarketQuote[]>([]);
+  const [fundamentals, setFundamentals] = useState<Fundamentals[]>([]);
+  const [settings, setSettings] = useState<Settings | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState({ ...emptyForm });
+  const [filter, setFilter] = useState("todos");
 
   const load = async () => {
     setLoading(true);
     setError(null);
-    const [{ data: assetsData, error: assetsError }, { data: positionsData, error: positionsError }, { data: incomesData, error: incomesError }, { data: valuationsData, error: valuationsError }, { data: quotesData, error: quotesError }] =
-      await Promise.all([
-        fetchAssets(supabase),
-        fetchPositions(supabase),
-        fetchIncomes(supabase),
-        fetchValuations(supabase),
-        fetchMarketQuotes(supabase)
-      ]);
+    const [
+      { data: assetsData, error: assetsError },
+      { data: positionsData, error: positionsError },
+      { data: incomesData, error: incomesError },
+      { data: valuationsData, error: valuationsError },
+      { data: quotesData, error: quotesError },
+      { data: fundamentalsData, error: fundamentalsError },
+      { data: settingsData, error: settingsError }
+    ] = await Promise.all([
+      fetchAssets(supabase),
+      fetchPositions(supabase),
+      fetchIncomes(supabase),
+      fetchValuations(supabase),
+      fetchMarketQuotes(supabase),
+      fetchFundamentals(supabase),
+      fetchSettings(supabase)
+    ]);
 
-    if (assetsError || positionsError || incomesError || valuationsError || quotesError) {
+    if (
+      assetsError ||
+      positionsError ||
+      incomesError ||
+      valuationsError ||
+      quotesError ||
+      fundamentalsError ||
+      settingsError
+    ) {
       setError("Não foi possível carregar as análises.");
     }
 
@@ -54,6 +100,8 @@ export default function AnalisesPage() {
     setIncomes(incomesData ?? []);
     setValuations(valuationsData ?? []);
     setQuotes(quotesData ?? []);
+    setFundamentals(fundamentalsData ?? []);
+    setSettings(settingsData ?? null);
     setLoading(false);
   };
 
@@ -92,6 +140,13 @@ export default function AnalisesPage() {
     }, {});
   }, [quotes]);
 
+  const fundamentalsMap = useMemo(() => {
+    return fundamentals.reduce<Record<string, Fundamentals>>((acc, item) => {
+      acc[item.asset_id] = item;
+      return acc;
+    }, {});
+  }, [fundamentals]);
+
   const incomeByAssetMonth = useMemo(() => {
     return incomes.reduce<Record<string, Record<string, number>>>((acc, income) => {
       acc[income.asset_id] = acc[income.asset_id] || {};
@@ -106,36 +161,59 @@ export default function AnalisesPage() {
     return months.slice(-1)[0] || "";
   }, [incomes]);
 
+  const recentMonths = useMemo(() => getRecentMonths(6), []);
+
   const rows = assets.map((asset) => {
     const pos = positionMap[asset.id];
     const invested = pos ? Number(pos.quantity) * Number(pos.avg_price) + Number(pos.costs ?? 0) : 0;
     const valuation = latestValuationMap[asset.id];
     const quote = latestQuoteMap[asset.id];
+    const fundamental = fundamentalsMap[asset.id];
     const incomeMonth = lastMonth ? incomeByAssetMonth[asset.id]?.[lastMonth] || 0 : 0;
 
     const monthsSorted = incomeByAssetMonth[asset.id] ? Object.keys(incomeByAssetMonth[asset.id]).sort() : [];
     const last12 = monthsSorted.slice(-12);
     const income12m = last12.reduce((sum, month) => sum + (incomeByAssetMonth[asset.id]?.[month] || 0), 0);
-    const position52 =
-      quote?.price && quote.week_52_high && quote.week_52_low && quote.week_52_high !== quote.week_52_low
-        ? (Number(quote.price) - Number(quote.week_52_low)) /
-          (Number(quote.week_52_high) - Number(quote.week_52_low))
-        : null;
-    const score = calcOpportunityScore({
-      dy12m: invested ? income12m / invested : 0,
-      pvp: valuation?.p_vp ?? null,
-      position52
+    const dy12m = invested ? income12m / invested : 0;
+
+    const rendaScore = Math.round(Math.min(Math.max(dy12m / rendaTarget, 0), 1) * 100);
+
+    const stabilityValues = recentMonths.map((month) => incomeByAssetMonth[asset.id]?.[month] || 0);
+    const estabilidadeScore = calcStabilityScore(stabilityValues);
+
+    const riskScore = calcRiskScore({
+      vacancyFinancial: fundamental?.vacancy_financial ?? null,
+      vacancyPhysical: fundamental?.vacancy_physical ?? null,
+      debtRatio: fundamental?.debt_ratio ?? null,
+      liquidityDaily: fundamental?.liquidity_daily ?? quote?.volume ?? null
     });
+
+    const scoreTotal = calcCompositeScore({
+      renda: rendaScore,
+      estabilidade: estabilidadeScore,
+      risco: riskScore
+    });
+
+    let signal: "oportunidade" | "neutro" | "risco" | "sem dados" = "sem dados";
+    if (scoreTotal !== null && scoreTotal !== undefined) {
+      if (scoreTotal >= 70) signal = "oportunidade";
+      else if (scoreTotal <= 40) signal = "risco";
+      else signal = "neutro";
+    }
 
     return {
       ...asset,
       invested,
       valuation,
       quote,
-      position52,
-      score,
+      fundamental,
       dyMonthly: invested ? incomeMonth / invested : 0,
-      dy12m: invested ? income12m / invested : 0
+      dy12m,
+      rendaScore,
+      estabilidadeScore,
+      riskScore,
+      scoreTotal,
+      signal
     };
   });
 
@@ -144,17 +222,40 @@ export default function AnalisesPage() {
     return dates.sort().slice(-1)[0] || "";
   }, [latestQuoteMap]);
 
+  const filteredRows = rows.filter((row) => {
+    if (filter === "todos") return true;
+    if (filter === "oportunidade") return row.scoreTotal !== null && row.scoreTotal >= 70;
+    if (filter === "risco") return row.scoreTotal !== null && row.scoreTotal <= 40;
+    if (filter === "renda") return row.rendaScore >= 70;
+    if (filter === "estavel") return row.estabilidadeScore !== null && row.estabilidadeScore >= 70;
+    if (filter === "vacancia") {
+      const threshold = settings?.alert_vacancy_pct ?? 0.15;
+      const vacancy = row.fundamental?.vacancy_financial ?? row.fundamental?.vacancy_physical ?? null;
+      return vacancy !== null && vacancy >= threshold;
+    }
+    if (filter === "sem_dados") return row.scoreTotal === null;
+    return true;
+  });
+
   const handleEdit = (asset: Asset) => {
     const valuation = latestValuationMap[asset.id];
+    const fundamental = fundamentalsMap[asset.id];
     setForm({
       valuation_id: valuation?.id || "",
+      fundamentals_id: fundamental?.id || "",
       asset_id: asset.id,
       price: valuation?.price?.toString() || "",
       vp_per_share: valuation?.vp_per_share?.toString() || "",
       p_vp: valuation?.p_vp?.toString() || "",
       status: asset.status || "ok",
       notes: asset.notes || "",
-      date: valuation?.date || new Date().toISOString().slice(0, 10)
+      date: valuation?.date || new Date().toISOString().slice(0, 10),
+      vacancy_physical: fundamental?.vacancy_physical?.toString() || "",
+      vacancy_financial: fundamental?.vacancy_financial?.toString() || "",
+      wault_years: fundamental?.wault_years?.toString() || "",
+      debt_ratio: fundamental?.debt_ratio?.toString() || "",
+      liquidity_daily: fundamental?.liquidity_daily?.toString() || "",
+      fundamentals_notes: fundamental?.notes || ""
     });
     setModalOpen(true);
   };
@@ -191,6 +292,22 @@ export default function AnalisesPage() {
       return;
     }
 
+    const { error: fundamentalsError } = await upsertFundamentals(supabase, {
+      id: form.fundamentals_id || undefined,
+      asset_id: form.asset_id,
+      vacancy_physical: form.vacancy_physical ? Number(form.vacancy_physical) : null,
+      vacancy_financial: form.vacancy_financial ? Number(form.vacancy_financial) : null,
+      wault_years: form.wault_years ? Number(form.wault_years) : null,
+      debt_ratio: form.debt_ratio ? Number(form.debt_ratio) : null,
+      liquidity_daily: form.liquidity_daily ? Number(form.liquidity_daily) : null,
+      notes: form.fundamentals_notes || null
+    });
+
+    if (fundamentalsError) {
+      setError(fundamentalsError.message);
+      return;
+    }
+
     setModalOpen(false);
     await load();
   };
@@ -203,12 +320,32 @@ export default function AnalisesPage() {
       <div>
         <h2 className="text-xl font-semibold text-slate-900">Análises</h2>
         <p className="text-sm text-slate-500">
-          Acompanhe P/VP, DY e sinais de mercado. Última atualização: {lastQuoteDate || "manual"}.
+          Score por renda, estabilidade e risco. Última atualização: {lastQuoteDate || "manual"}.
         </p>
       </div>
 
+      <div className="flex flex-wrap gap-2">
+        {[
+          { key: "todos", label: "Todos" },
+          { key: "oportunidade", label: "Oportunidades" },
+          { key: "risco", label: "Risco" },
+          { key: "renda", label: "Renda alta" },
+          { key: "estavel", label: "Estáveis" },
+          { key: "vacancia", label: "Vacância alta" },
+          { key: "sem_dados", label: "Sem dados" }
+        ].map((item) => (
+          <button
+            key={item.key}
+            className={`btn ${filter === item.key ? "btn-primary" : "btn-ghost"}`}
+            onClick={() => setFilter(item.key)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+
       <ResponsiveTable
-        data={rows}
+        data={filteredRows}
         emptyLabel="Cadastre ativos para analisar."
         columns={[
           { key: "ticker", label: "Ticker" },
@@ -218,49 +355,51 @@ export default function AnalisesPage() {
             render: (row) => (row.quote?.price ? formatCurrency(Number(row.quote.price)) : "-")
           },
           {
-            key: "change",
-            label: "Variação",
-            render: (row) =>
-              row.quote?.change_percent !== null && row.quote?.change_percent !== undefined
-                ? formatPercent(Number(row.quote.change_percent) / 100)
-                : "-"
-          },
-          {
-            key: "p_vp",
-            label: "P/VP",
-            render: (row) => (row.valuation?.p_vp ? row.valuation.p_vp.toFixed(2) : "-")
-          },
-          {
-            key: "dyMonthly",
-            label: "DY mensal",
-            render: (row) => formatPercent(row.dyMonthly)
-          },
-          {
             key: "dy12m",
             label: "DY 12m",
             render: (row) => formatPercent(row.dy12m)
           },
           {
-            key: "position52",
-            label: "Faixa 52s",
-            render: (row) =>
-              row.position52 !== null && row.position52 !== undefined
-                ? formatPercent(row.position52)
-                : "-"
+            key: "rendaScore",
+            label: "Renda",
+            render: (row) => row.rendaScore
           },
           {
-            key: "score",
+            key: "estabilidadeScore",
+            label: "Estabilidade",
+            render: (row) => (row.estabilidadeScore !== null ? row.estabilidadeScore : "-")
+          },
+          {
+            key: "riskScore",
+            label: "Risco",
+            render: (row) => (row.riskScore !== null && row.riskScore !== undefined ? row.riskScore : "-")
+          },
+          {
+            key: "scoreTotal",
             label: "Score",
-            render: (row) => (row.score !== null && row.score !== undefined ? `${row.score}` : "-")
+            render: (row) => (row.scoreTotal !== null && row.scoreTotal !== undefined ? row.scoreTotal : "-")
           },
           {
-            key: "status",
-            label: "Status",
+            key: "vacancy",
+            label: "Vacância",
             render: (row) => {
-              const status = row.status || "ok";
+              const vacancy = row.fundamental?.vacancy_financial ?? row.fundamental?.vacancy_physical ?? null;
+              return vacancy !== null ? formatPercent(vacancy) : "-";
+            }
+          },
+          {
+            key: "signal",
+            label: "Sinal",
+            render: (row) => {
               const badge =
-                status === "problema" ? "badge-danger" : status === "atencao" ? "badge-warning" : "badge-success";
-              return <span className={`badge ${badge}`}>{status}</span>;
+                row.signal === "oportunidade"
+                  ? "badge-success"
+                  : row.signal === "risco"
+                  ? "badge-danger"
+                  : row.signal === "neutro"
+                  ? "badge-warning"
+                  : "badge-warning";
+              return <span className={`badge ${badge}`}>{row.signal}</span>;
             }
           },
           {
@@ -277,7 +416,7 @@ export default function AnalisesPage() {
 
       <div className="card">
         <div className="card-body text-xs text-slate-500">
-          Score é um indicador heurístico (DY, P/VP e posição na faixa de 52 semanas). Não é recomendação de investimento.
+          Score combina renda (DY 12m), estabilidade de proventos e risco (vacância, dívida e liquidez). Não é recomendação de investimento.
         </div>
       </div>
 
@@ -337,11 +476,72 @@ export default function AnalisesPage() {
             <label className="text-xs font-semibold text-slate-600">Tese / Observação</label>
             <textarea
               className="input mt-1"
-              rows={4}
+              rows={3}
               value={form.notes}
               onChange={(event) => setForm((prev) => ({ ...prev, notes: event.target.value }))}
             />
           </div>
+
+          <div className="border-t border-slate-100 pt-4">
+            <h4 className="text-sm font-semibold text-slate-700">Fundamentos</h4>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <div>
+                <label className="text-xs font-semibold text-slate-600">Vacância física (ex: 0.1 = 10%)</label>
+                <input
+                  type="number"
+                  className="input mt-1"
+                  value={form.vacancy_physical}
+                  onChange={(event) => setForm((prev) => ({ ...prev, vacancy_physical: event.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-600">Vacância financeira (ex: 0.1 = 10%)</label>
+                <input
+                  type="number"
+                  className="input mt-1"
+                  value={form.vacancy_financial}
+                  onChange={(event) => setForm((prev) => ({ ...prev, vacancy_financial: event.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-600">WAULT (anos)</label>
+                <input
+                  type="number"
+                  className="input mt-1"
+                  value={form.wault_years}
+                  onChange={(event) => setForm((prev) => ({ ...prev, wault_years: event.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-600">Dívida / Patrimônio (ex: 0.3 = 30%)</label>
+                <input
+                  type="number"
+                  className="input mt-1"
+                  value={form.debt_ratio}
+                  onChange={(event) => setForm((prev) => ({ ...prev, debt_ratio: event.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-600">Liquidez diária (R$)</label>
+                <input
+                  type="number"
+                  className="input mt-1"
+                  value={form.liquidity_daily}
+                  onChange={(event) => setForm((prev) => ({ ...prev, liquidity_daily: event.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="mt-3">
+              <label className="text-xs font-semibold text-slate-600">Notas de fundamentos</label>
+              <textarea
+                className="input mt-1"
+                rows={3}
+                value={form.fundamentals_notes}
+                onChange={(event) => setForm((prev) => ({ ...prev, fundamentals_notes: event.target.value }))}
+              />
+            </div>
+          </div>
+
           <button className="btn btn-primary w-full" type="submit">
             Salvar análise
           </button>

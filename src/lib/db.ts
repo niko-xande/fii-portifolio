@@ -1,5 +1,5 @@
 ﻿import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Asset, Position, Income, Valuation, Settings, MarketQuote, AssetCatalog } from "@/types";
+import type { Asset, Position, Income, Valuation, Settings, MarketQuote, AssetCatalog, Fundamentals } from "@/types";
 
 export const fetchAssets = async (supabase: SupabaseClient) => {
   return supabase.from("assets").select("*").order("ticker");
@@ -63,6 +63,18 @@ export const upsertSettings = async (supabase: SupabaseClient, payload: Partial<
 
 export const fetchMarketQuotes = async (supabase: SupabaseClient) => {
   return supabase.from("market_quotes").select("*").order("date", { ascending: false });
+};
+
+export const fetchFundamentals = async (supabase: SupabaseClient) => {
+  return supabase.from("fundamentals").select("*");
+};
+
+export const upsertFundamentals = async (supabase: SupabaseClient, payload: Partial<Fundamentals>) => {
+  return supabase
+    .from("fundamentals")
+    .upsert(payload, { onConflict: "user_id,asset_id" })
+    .select("*")
+    .single();
 };
 
 export const fetchAssetCatalog = async (supabase: SupabaseClient) => {

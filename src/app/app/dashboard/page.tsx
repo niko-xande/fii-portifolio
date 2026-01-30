@@ -2,7 +2,15 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { getSupabaseBrowser } from "@/lib/supabaseClient";
-import { fetchAssets, fetchIncomes, fetchPositions, fetchSettings, fetchMarketQuotes, fetchValuations } from "@/lib/db";
+import {
+  fetchAssets,
+  fetchFundamentals,
+  fetchIncomes,
+  fetchMarketQuotes,
+  fetchPositions,
+  fetchSettings,
+  fetchValuations
+} from "@/lib/db";
 import { KpiCard } from "@/components/KpiCard";
 import { LoadingState, ErrorState, EmptyState } from "@/components/State";
 import { ResponsiveTable } from "@/components/ResponsiveTable";
@@ -30,7 +38,7 @@ import {
   Bar,
   Legend
 } from "recharts";
-import type { Asset, Income, Position, Settings, MarketQuote, Valuation } from "@/types";
+import type { Asset, Income, Position, Settings, MarketQuote, Valuation, Fundamentals } from "@/types";
 
 const COLORS = ["#0f766e", "#f59e0b", "#475569", "#e11d48", "#0ea5e9", "#f97316"];
 
@@ -53,6 +61,7 @@ export default function DashboardPage() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [quotes, setQuotes] = useState<MarketQuote[]>([]);
   const [valuations, setValuations] = useState<Valuation[]>([]);
+  const [fundamentals, setFundamentals] = useState<Fundamentals[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -66,17 +75,27 @@ export default function DashboardPage() {
         { data: incomesData, error: incomesError },
         { data: settingsData, error: settingsError },
         { data: quotesData, error: quotesError },
-        { data: valuationsData, error: valuationsError }
+        { data: valuationsData, error: valuationsError },
+        { data: fundamentalsData, error: fundamentalsError }
       ] = await Promise.all([
         fetchAssets(supabase),
         fetchPositions(supabase),
         fetchIncomes(supabase),
         fetchSettings(supabase),
         fetchMarketQuotes(supabase),
-        fetchValuations(supabase)
+        fetchValuations(supabase),
+        fetchFundamentals(supabase)
       ]);
 
-      if (assetsError || positionsError || incomesError || settingsError || quotesError || valuationsError) {
+      if (
+        assetsError ||
+        positionsError ||
+        incomesError ||
+        settingsError ||
+        quotesError ||
+        valuationsError ||
+        fundamentalsError
+      ) {
         setError("Não foi possível carregar o dashboard. Tente novamente.");
       }
 
@@ -86,6 +105,7 @@ export default function DashboardPage() {
       setSettings(settingsData ?? null);
       setQuotes(quotesData ?? []);
       setValuations(valuationsData ?? []);
+      setFundamentals(fundamentalsData ?? []);
       setLoading(false);
     };
 
@@ -100,6 +120,14 @@ export default function DashboardPage() {
       .sort()
       .map((month) => ({ month: formatMonth(month), value: groupedIncomes[month] }));
   }, [groupedIncomes]);
+
+  const incomeByAssetMonth = useMemo(() => {
+    return incomes.reduce<Record<string, Record<string, number>>>((acc, income) => {
+      acc[income.asset_id] = acc[income.asset_id] || {};
+      acc[income.asset_id][income.month] = (acc[income.asset_id][income.month] || 0) + Number(income.amount ?? 0);
+      return acc;
+    }, {});
+  }, [incomes]);
 
   const missingIncomeMonths = useMemo(() => {
     const missing: string[] = [];
@@ -127,6 +155,13 @@ export default function DashboardPage() {
       return acc;
     }, {});
   }, [assets]);
+
+  const fundamentalsMap = useMemo(() => {
+    return fundamentals.reduce<Record<string, Fundamentals>>((acc, item) => {
+      acc[item.asset_id] = item;
+      return acc;
+    }, {});
+  }, [fundamentals]);
 
   const positionMap = useMemo(() => {
     return positions.reduce<Record<string, Position>>((acc, pos) => {
@@ -268,6 +303,41 @@ export default function DashboardPage() {
   const maxAssetPct = Math.max(...Object.values(concentration), 0);
   const incomeDrop = calcIncomeDrop(incomes, 3);
   const missingIncome = incomes.length === 0 || missingIncomeMonths.length > 0;
+  const vacancyThreshold = settings?.alert_vacancy_pct ?? 0.15;
+  const assetDyDropThreshold = settings?.alert_asset_dy_drop_pct ?? 0.2;
+
+  const vacancyAlerts = assets
+    .map((asset) => {
+      const fundamental = fundamentalsMap[asset.id];
+      const vacancy =
+        fundamental?.vacancy_financial ?? fundamental?.vacancy_physical ?? null;
+      if (vacancy !== null && vacancy >= vacancyThreshold) {
+        return `${asset.ticker}: vacância ${formatPercent(vacancy)}`;
+      }
+      return null;
+    })
+    .filter(Boolean) as string[];
+
+  const assetDyDropAlerts = assets
+    .map((asset) => {
+      const months = incomeByAssetMonth[asset.id]
+        ? Object.keys(incomeByAssetMonth[asset.id]).sort()
+        : [];
+      if (months.length < 4) return null;
+      const last = incomeByAssetMonth[asset.id]?.[months[months.length - 1]] || 0;
+      const prev = months.slice(-4, -1);
+      const avgPrev =
+        prev.reduce((sum, month) => sum + (incomeByAssetMonth[asset.id]?.[month] || 0), 0) /
+        prev.length;
+      if (!avgPrev) return null;
+      const drop = (avgPrev - last) / avgPrev;
+      if (drop >= assetDyDropThreshold) {
+        return `${asset.ticker}: queda DY ${formatPercent(drop)}`;
+      }
+      return null;
+    })
+    .filter(Boolean) as string[];
+
   const alerts = [
     maxAssetPct > (settings?.alert_max_asset_pct ?? 0.2)
       ? `Concentração alta: ${formatPercent(maxAssetPct)} em um ativo.`
@@ -277,7 +347,9 @@ export default function DashboardPage() {
       : null,
     missingIncome
       ? "Meses recentes sem rendimentos lançados. Verifique dados faltantes."
-      : null
+      : null,
+    ...vacancyAlerts,
+    ...assetDyDropAlerts
   ].filter(Boolean) as string[];
 
   if (loading) return <LoadingState />;

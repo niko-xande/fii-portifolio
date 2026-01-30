@@ -10,6 +10,8 @@ export default function ConfiguracoesPage() {
   const [goalAmount, setGoalAmount] = useState("100000");
   const [maxAssetPct, setMaxAssetPct] = useState("0.2");
   const [incomeDropPct, setIncomeDropPct] = useState("0.2");
+  const [vacancyPct, setVacancyPct] = useState("0.15");
+  const [assetDyDropPct, setAssetDyDropPct] = useState("0.2");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -23,6 +25,8 @@ export default function ConfiguracoesPage() {
         setGoalAmount(data.goal_amount?.toString() || "100000");
         setMaxAssetPct(data.alert_max_asset_pct?.toString() || "0.2");
         setIncomeDropPct(data.alert_income_drop_pct?.toString() || "0.2");
+        setVacancyPct(data.alert_vacancy_pct?.toString() || "0.15");
+        setAssetDyDropPct(data.alert_asset_dy_drop_pct?.toString() || "0.2");
       }
       setLoading(false);
     };
@@ -35,7 +39,9 @@ export default function ConfiguracoesPage() {
     const { error: saveError } = await upsertSettings(supabase, {
       goal_amount: Number(goalAmount),
       alert_max_asset_pct: Number(maxAssetPct),
-      alert_income_drop_pct: Number(incomeDropPct)
+      alert_income_drop_pct: Number(incomeDropPct),
+      alert_vacancy_pct: Number(vacancyPct),
+      alert_asset_dy_drop_pct: Number(assetDyDropPct)
     });
     if (saveError) {
       setError(saveError.message);
@@ -80,6 +86,24 @@ export default function ConfiguracoesPage() {
               className="input mt-1"
               value={incomeDropPct}
               onChange={(event) => setIncomeDropPct(event.target.value)}
+            />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-slate-600">Alerta de vacância alta (ex: 0.15 = 15%)</label>
+            <input
+              type="number"
+              className="input mt-1"
+              value={vacancyPct}
+              onChange={(event) => setVacancyPct(event.target.value)}
+            />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-slate-600">Alerta de queda de DY por ativo (ex: 0.2 = 20%)</label>
+            <input
+              type="number"
+              className="input mt-1"
+              value={assetDyDropPct}
+              onChange={(event) => setAssetDyDropPct(event.target.value)}
             />
           </div>
           {message && <p className="text-xs text-emerald-600">{message}</p>}
