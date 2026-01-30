@@ -59,3 +59,41 @@ export const calcIncomeDrop = (incomes: Income[], months: number) => {
   if (!avgPrev) return 0;
   return (avgPrev - last) / avgPrev;
 };
+
+export const calcOpportunityScore = ({
+  dy12m,
+  pvp,
+  position52
+}: {
+  dy12m: number;
+  pvp?: number | null;
+  position52?: number | null;
+}) => {
+  let totalWeight = 0;
+  let score = 0;
+
+  if (!Number.isNaN(dy12m)) {
+    const weight = 0.4;
+    const target = 0.12;
+    const normalized = Math.min(Math.max(dy12m / target, 0), 1);
+    score += normalized * weight;
+    totalWeight += weight;
+  }
+
+  if (pvp) {
+    const weight = 0.3;
+    const normalized = pvp <= 1 ? 1 : Math.max(0, 1 - (pvp - 1) / 0.5);
+    score += normalized * weight;
+    totalWeight += weight;
+  }
+
+  if (position52 !== null && position52 !== undefined && !Number.isNaN(position52)) {
+    const weight = 0.3;
+    const normalized = Math.min(Math.max(1 - position52, 0), 1);
+    score += normalized * weight;
+    totalWeight += weight;
+  }
+
+  if (!totalWeight) return null;
+  return Math.round((score / totalWeight) * 100);
+};

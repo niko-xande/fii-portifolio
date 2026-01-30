@@ -52,3 +52,18 @@ export interface Settings {
   alert_income_drop_pct: number;
   created_at: string;
 }
+
+export interface MarketQuote {
+  id: string;
+  user_id: string;
+  asset_id: string;
+  date: string;
+  price: number | null;
+  change: number | null;
+  change_percent: number | null;
+  volume: number | null;
+  week_52_high: number | null;
+  week_52_low: number | null;
+  source: string | null;
+  created_at: string;
+}

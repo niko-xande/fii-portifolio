@@ -76,6 +76,18 @@ Configure as variáveis no Render e defina:
 - Mantenha a anon key no frontend, jamais a service_role.
 - Revise regras no Supabase para evitar acesso indevido.
 
+## 8) Atualização diária de mercado (opcional)
+Para preços diários (ex.: FIIs), use a Edge Function `update-market-quotes` que consome API externa e salva em `market_quotes`.
+
+Resumo rápido:
+- Deploy da função: `supabase functions deploy update-market-quotes`
+- Configure secrets da função:
+  - `SUPABASE_URL`
+  - `SUPABASE_SERVICE_ROLE_KEY`
+  - `BRAPI_TOKEN` (se sua API exigir token)
+  - `BRAPI_BASE_URL` (opcional)
+- Agende execução diária via `pg_cron` + `pg_net` (exemplo em `supabase/functions/update-market-quotes/README.md`)
+
 ## Estrutura do projeto
 - `src/app` – Rotas (App Router)
 - `src/components` – Componentes UI

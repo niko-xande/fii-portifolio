@@ -2,13 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { getSupabaseBrowser } from "@/lib/supabaseClient";
-import { fetchAssets, fetchIncomes, fetchPositions, fetchValuations, upsertAsset, upsertValuation } from "@/lib/db";
-import { formatPercent } from "@/lib/format";
+import { fetchAssets, fetchIncomes, fetchPositions, fetchValuations, fetchMarketQuotes, upsertAsset, upsertValuation } from "@/lib/db";
+import { formatCurrency, formatPercent } from "@/lib/format";
 import { Modal } from "@/components/Modal";
 import { ResponsiveTable } from "@/components/ResponsiveTable";
 import { LoadingState, ErrorState } from "@/components/State";
-import { groupIncomesByMonth } from "@/utils/calculations";
-import type { Asset, Income, Position, Valuation } from "@/types";
+import { calcOpportunityScore, groupIncomesByMonth } from "@/utils/calculations";
+import type { Asset, Income, Position, Valuation, MarketQuote } from "@/types";
 
 const emptyForm = {
   valuation_id: "",
@@ -27,6 +27,7 @@ export default function AnalisesPage() {
   const [positions, setPositions] = useState<Position[]>([]);
   const [incomes, setIncomes] = useState<Income[]>([]);
   const [valuations, setValuations] = useState<Valuation[]>([]);
+  const [quotes, setQuotes] = useState<MarketQuote[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -35,15 +36,16 @@ export default function AnalisesPage() {
   const load = async () => {
     setLoading(true);
     setError(null);
-    const [{ data: assetsData, error: assetsError }, { data: positionsData, error: positionsError }, { data: incomesData, error: incomesError }, { data: valuationsData, error: valuationsError }] =
+    const [{ data: assetsData, error: assetsError }, { data: positionsData, error: positionsError }, { data: incomesData, error: incomesError }, { data: valuationsData, error: valuationsError }, { data: quotesData, error: quotesError }] =
       await Promise.all([
         fetchAssets(supabase),
         fetchPositions(supabase),
         fetchIncomes(supabase),
-        fetchValuations(supabase)
+        fetchValuations(supabase),
+        fetchMarketQuotes(supabase)
       ]);
 
-    if (assetsError || positionsError || incomesError || valuationsError) {
+    if (assetsError || positionsError || incomesError || valuationsError || quotesError) {
       setError("Não foi possível carregar as análises.");
     }
 
@@ -51,6 +53,7 @@ export default function AnalisesPage() {
     setPositions(positionsData ?? []);
     setIncomes(incomesData ?? []);
     setValuations(valuationsData ?? []);
+    setQuotes(quotesData ?? []);
     setLoading(false);
   };
 
@@ -79,6 +82,16 @@ export default function AnalisesPage() {
     }, {});
   }, [valuations]);
 
+  const latestQuoteMap = useMemo(() => {
+    return quotes.reduce<Record<string, MarketQuote>>((acc, quote) => {
+      const existing = acc[quote.asset_id];
+      if (!existing || quote.date > existing.date) {
+        acc[quote.asset_id] = quote;
+      }
+      return acc;
+    }, {});
+  }, [quotes]);
+
   const incomeByAssetMonth = useMemo(() => {
     return incomes.reduce<Record<string, Record<string, number>>>((acc, income) => {
       acc[income.asset_id] = acc[income.asset_id] || {};
@@ -97,20 +110,39 @@ export default function AnalisesPage() {
     const pos = positionMap[asset.id];
     const invested = pos ? Number(pos.quantity) * Number(pos.avg_price) + Number(pos.costs ?? 0) : 0;
     const valuation = latestValuationMap[asset.id];
+    const quote = latestQuoteMap[asset.id];
     const incomeMonth = lastMonth ? incomeByAssetMonth[asset.id]?.[lastMonth] || 0 : 0;
 
     const monthsSorted = incomeByAssetMonth[asset.id] ? Object.keys(incomeByAssetMonth[asset.id]).sort() : [];
     const last12 = monthsSorted.slice(-12);
     const income12m = last12.reduce((sum, month) => sum + (incomeByAssetMonth[asset.id]?.[month] || 0), 0);
+    const position52 =
+      quote?.price && quote.week_52_high && quote.week_52_low && quote.week_52_high !== quote.week_52_low
+        ? (Number(quote.price) - Number(quote.week_52_low)) /
+          (Number(quote.week_52_high) - Number(quote.week_52_low))
+        : null;
+    const score = calcOpportunityScore({
+      dy12m: invested ? income12m / invested : 0,
+      pvp: valuation?.p_vp ?? null,
+      position52
+    });
 
     return {
       ...asset,
       invested,
       valuation,
+      quote,
+      position52,
+      score,
       dyMonthly: invested ? incomeMonth / invested : 0,
       dy12m: invested ? income12m / invested : 0
     };
   });
+
+  const lastQuoteDate = useMemo(() => {
+    const dates = Object.values(latestQuoteMap).map((quote) => quote.date);
+    return dates.sort().slice(-1)[0] || "";
+  }, [latestQuoteMap]);
 
   const handleEdit = (asset: Asset) => {
     const valuation = latestValuationMap[asset.id];
@@ -170,7 +202,9 @@ export default function AnalisesPage() {
     <div className="space-y-6">
       <div>
         <h2 className="text-xl font-semibold text-slate-900">Análises</h2>
-        <p className="text-sm text-slate-500">Acompanhe P/VP, DY e sua tese.</p>
+        <p className="text-sm text-slate-500">
+          Acompanhe P/VP, DY e sinais de mercado. Última atualização: {lastQuoteDate || "manual"}.
+        </p>
       </div>
 
       <ResponsiveTable
@@ -178,6 +212,19 @@ export default function AnalisesPage() {
         emptyLabel="Cadastre ativos para analisar."
         columns={[
           { key: "ticker", label: "Ticker" },
+          {
+            key: "price",
+            label: "Preço",
+            render: (row) => (row.quote?.price ? formatCurrency(Number(row.quote.price)) : "-")
+          },
+          {
+            key: "change",
+            label: "Variação",
+            render: (row) =>
+              row.quote?.change_percent !== null && row.quote?.change_percent !== undefined
+                ? formatPercent(Number(row.quote.change_percent) / 100)
+                : "-"
+          },
           {
             key: "p_vp",
             label: "P/VP",
@@ -192,6 +239,19 @@ export default function AnalisesPage() {
             key: "dy12m",
             label: "DY 12m",
             render: (row) => formatPercent(row.dy12m)
+          },
+          {
+            key: "position52",
+            label: "Faixa 52s",
+            render: (row) =>
+              row.position52 !== null && row.position52 !== undefined
+                ? formatPercent(row.position52)
+                : "-"
+          },
+          {
+            key: "score",
+            label: "Score",
+            render: (row) => (row.score !== null && row.score !== undefined ? `${row.score}` : "-")
           },
           {
             key: "status",
@@ -214,6 +274,12 @@ export default function AnalisesPage() {
           }
         ]}
       />
+
+      <div className="card">
+        <div className="card-body text-xs text-slate-500">
+          Score é um indicador heurístico (DY, P/VP e posição na faixa de 52 semanas). Não é recomendação de investimento.
+        </div>
+      </div>
 
       <Modal open={modalOpen} onClose={() => setModalOpen(false)} title="Atualizar análise">
         <form className="space-y-4" onSubmit={handleSave}>
