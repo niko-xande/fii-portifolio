@@ -7,9 +7,11 @@ import {
   fetchFundamentals,
   fetchIncomes,
   fetchMarketQuotes,
+  fetchMarketCatalogQuotes,
   fetchPositions,
   fetchSettings,
   fetchValuations,
+  fetchAssetCatalog,
   upsertAsset,
   upsertFundamentals,
   upsertValuation
@@ -25,7 +27,17 @@ import {
   getRecentMonths,
   groupIncomesByMonth
 } from "@/utils/calculations";
-import type { Asset, Fundamentals, Income, MarketQuote, Position, Settings, Valuation } from "@/types";
+import type {
+  Asset,
+  Fundamentals,
+  Income,
+  MarketQuote,
+  Position,
+  Settings,
+  Valuation,
+  AssetCatalog,
+  MarketCatalogQuote
+} from "@/types";
 
 const emptyForm = {
   valuation_id: "",
@@ -56,6 +68,8 @@ export default function AnalisesPage() {
   const [quotes, setQuotes] = useState<MarketQuote[]>([]);
   const [fundamentals, setFundamentals] = useState<Fundamentals[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [catalog, setCatalog] = useState<AssetCatalog[]>([]);
+  const [catalogQuotes, setCatalogQuotes] = useState<MarketCatalogQuote[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -72,7 +86,9 @@ export default function AnalisesPage() {
       { data: valuationsData, error: valuationsError },
       { data: quotesData, error: quotesError },
       { data: fundamentalsData, error: fundamentalsError },
-      { data: settingsData, error: settingsError }
+      { data: settingsData, error: settingsError },
+      { data: catalogData, error: catalogError },
+      { data: catalogQuotesData, error: catalogQuotesError }
     ] = await Promise.all([
       fetchAssets(supabase),
       fetchPositions(supabase),
@@ -80,7 +96,9 @@ export default function AnalisesPage() {
       fetchValuations(supabase),
       fetchMarketQuotes(supabase),
       fetchFundamentals(supabase),
-      fetchSettings(supabase)
+      fetchSettings(supabase),
+      fetchAssetCatalog(supabase),
+      fetchMarketCatalogQuotes(supabase)
     ]);
 
     if (
@@ -90,7 +108,9 @@ export default function AnalisesPage() {
       valuationsError ||
       quotesError ||
       fundamentalsError ||
-      settingsError
+      settingsError ||
+      catalogError ||
+      catalogQuotesError
     ) {
       setError("Não foi possível carregar as análises.");
     }
@@ -102,6 +122,8 @@ export default function AnalisesPage() {
     setQuotes(quotesData ?? []);
     setFundamentals(fundamentalsData ?? []);
     setSettings(settingsData ?? null);
+    setCatalog(catalogData ?? []);
+    setCatalogQuotes(catalogQuotesData ?? []);
     setLoading(false);
   };
 
@@ -139,6 +161,23 @@ export default function AnalisesPage() {
       return acc;
     }, {});
   }, [quotes]);
+
+  const catalogMap = useMemo(() => {
+    return catalog.reduce<Record<string, AssetCatalog>>((acc, item) => {
+      acc[item.id] = item;
+      return acc;
+    }, {});
+  }, [catalog]);
+
+  const latestCatalogQuoteMap = useMemo(() => {
+    return catalogQuotes.reduce<Record<string, MarketCatalogQuote>>((acc, quote) => {
+      const existing = acc[quote.catalog_id];
+      if (!existing || quote.date > existing.date) {
+        acc[quote.catalog_id] = quote;
+      }
+      return acc;
+    }, {});
+  }, [catalogQuotes]);
 
   const fundamentalsMap = useMemo(() => {
     return fundamentals.reduce<Record<string, Fundamentals>>((acc, item) => {
@@ -221,6 +260,22 @@ export default function AnalisesPage() {
     const dates = Object.values(latestQuoteMap).map((quote) => quote.date);
     return dates.sort().slice(-1)[0] || "";
   }, [latestQuoteMap]);
+
+  const marketRows = useMemo(() => {
+    return catalog.map((item) => {
+      const quote = latestCatalogQuoteMap[item.id];
+      const position52 =
+        quote?.price && quote.week_52_high && quote.week_52_low && quote.week_52_high !== quote.week_52_low
+          ? (Number(quote.price) - Number(quote.week_52_low)) /
+            (Number(quote.week_52_high) - Number(quote.week_52_low))
+          : null;
+      return {
+        ...item,
+        quote,
+        position52
+      };
+    });
+  }, [catalog, latestCatalogQuoteMap]);
 
   const filteredRows = rows.filter((row) => {
     if (filter === "todos") return true;
@@ -417,6 +472,43 @@ export default function AnalisesPage() {
       <div className="card">
         <div className="card-body text-xs text-slate-500">
           Score combina renda (DY 12m), estabilidade de proventos e risco (vacância, dívida e liquidez). Não é recomendação de investimento.
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-header">
+          <h3 className="text-sm font-semibold text-slate-900">Mercado (catálogo)</h3>
+          <span className="text-xs text-slate-500">Indicadores de preço</span>
+        </div>
+        <div className="card-body">
+          <ResponsiveTable
+            data={marketRows.slice(0, 15)}
+            emptyLabel="Importe um catálogo para visualizar dados de mercado."
+            columns={[
+              { key: "ticker", label: "Ticker" },
+              {
+                key: "price",
+                label: "Preço",
+                render: (row) => (row.quote?.price ? formatCurrency(Number(row.quote.price)) : "-")
+              },
+              {
+                key: "change",
+                label: "Variação",
+                render: (row) =>
+                  row.quote?.change_percent !== null && row.quote?.change_percent !== undefined
+                    ? formatPercent(Number(row.quote.change_percent) / 100)
+                    : "-"
+              },
+              {
+                key: "position52",
+                label: "Faixa 52s",
+                render: (row) =>
+                  row.position52 !== null && row.position52 !== undefined
+                    ? formatPercent(row.position52)
+                    : "-"
+              }
+            ]}
+          />
         </div>
       </div>
 

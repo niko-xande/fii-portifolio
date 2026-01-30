@@ -49,21 +49,28 @@ const fetchQuote = async (ticker: string): Promise<QuoteResult | null> => {
   return result as QuoteResult;
 };
 
-Deno.serve(async (req) => {
+Deno.serve(async () => {
   try {
-    const { data: assets, error } = await supabase
-      .from("assets")
-      .select("id, user_id, ticker");
+    const [{ data: assets, error: assetsError }, { data: catalog, error: catalogError }] = await Promise.all([
+      supabase.from("assets").select("id, user_id, ticker"),
+      supabase.from("asset_catalog").select("id, user_id, ticker")
+    ]);
 
-    if (error) {
-      return new Response(JSON.stringify({ error: error.message }), { status: 500 });
+    if (assetsError || catalogError) {
+      return new Response(JSON.stringify({ error: assetsError?.message || catalogError?.message }), { status: 500 });
     }
 
-    if (!assets?.length) {
-      return new Response(JSON.stringify({ message: "No assets found" }), { status: 200 });
+    const assetRows = assets ?? [];
+    const catalogRows = catalog ?? [];
+
+    const uniqueTickers = Array.from(
+      new Set([...assetRows.map((asset) => asset.ticker), ...catalogRows.map((item) => item.ticker)])
+    );
+
+    if (!uniqueTickers.length) {
+      return new Response(JSON.stringify({ message: "No tickers found" }), { status: 200 });
     }
 
-    const uniqueTickers = Array.from(new Set(assets.map((asset) => asset.ticker)));
     const quotesByTicker: Record<string, QuoteResult> = {};
 
     for (const ticker of uniqueTickers) {
@@ -74,7 +81,8 @@ Deno.serve(async (req) => {
     }
 
     const today = new Date().toISOString().slice(0, 10);
-    const rows = assets
+
+    const assetQuotes = assetRows
       .map((asset) => {
         const quote = quotesByTicker[asset.ticker];
         if (!quote) return null;
@@ -97,21 +105,53 @@ Deno.serve(async (req) => {
       })
       .filter(Boolean);
 
-    if (!rows.length) {
-      return new Response(JSON.stringify({ message: "No quotes collected" }), { status: 200 });
+    const catalogQuotes = catalogRows
+      .map((item) => {
+        const quote = quotesByTicker[item.ticker];
+        if (!quote) return null;
+        const date = quote.regularMarketTime
+          ? new Date(quote.regularMarketTime).toISOString().slice(0, 10)
+          : today;
+
+        return {
+          user_id: item.user_id,
+          catalog_id: item.id,
+          date,
+          price: quote.regularMarketPrice ?? null,
+          change: quote.regularMarketChange ?? null,
+          change_percent: quote.regularMarketChangePercent ?? null,
+          volume: quote.regularMarketVolume ?? null,
+          week_52_high: quote.fiftyTwoWeekHigh ?? null,
+          week_52_low: quote.fiftyTwoWeekLow ?? null,
+          source: "brapi"
+        };
+      })
+      .filter(Boolean);
+
+    if (assetQuotes.length) {
+      const { error: upsertError } = await supabase
+        .from("market_quotes")
+        .upsert(assetQuotes, { onConflict: "user_id,asset_id,date" });
+
+      if (upsertError) {
+        return new Response(JSON.stringify({ error: upsertError.message }), { status: 500 });
+      }
     }
 
-    const { error: upsertError } = await supabase
-      .from("market_quotes")
-      .upsert(rows, { onConflict: "user_id,asset_id,date" });
+    if (catalogQuotes.length) {
+      const { error: catalogUpsertError } = await supabase
+        .from("market_catalog_quotes")
+        .upsert(catalogQuotes, { onConflict: "user_id,catalog_id,date" });
 
-    if (upsertError) {
-      return new Response(JSON.stringify({ error: upsertError.message }), { status: 500 });
+      if (catalogUpsertError) {
+        return new Response(JSON.stringify({ error: catalogUpsertError.message }), { status: 500 });
+      }
     }
 
     return new Response(
       JSON.stringify({
-        updated: rows.length,
+        updatedAssets: assetQuotes.length,
+        updatedCatalog: catalogQuotes.length,
         tickers: Object.keys(quotesByTicker).length
       }),
       { status: 200 }

@@ -96,6 +96,10 @@ Você pode importar um CSV com colunas `ticker,name,type,sector,ref_price` ou ge
 No painel **Análises**, é possível registrar dados fundamentais (vacância, WAULT, dívida, liquidez).
 Esses dados alimentam os **scores de renda/estabilidade/risco** e os alertas do dashboard.
 
+## 11) Visão de mercado (catálogo)
+Para ver dados de mercado além da sua carteira, importe um catálogo de FIIs.
+O sistema atualiza as cotações diárias e exibe um snapshot no Dashboard e Análises.
+
 ## Estrutura do projeto
 - `src/app` – Rotas (App Router)
 - `src/components` – Componentes UI

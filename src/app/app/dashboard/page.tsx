@@ -7,9 +7,11 @@ import {
   fetchFundamentals,
   fetchIncomes,
   fetchMarketQuotes,
+  fetchMarketCatalogQuotes,
   fetchPositions,
   fetchSettings,
-  fetchValuations
+  fetchValuations,
+  fetchAssetCatalog
 } from "@/lib/db";
 import { KpiCard } from "@/components/KpiCard";
 import { LoadingState, ErrorState, EmptyState } from "@/components/State";
@@ -38,7 +40,17 @@ import {
   Bar,
   Legend
 } from "recharts";
-import type { Asset, Income, Position, Settings, MarketQuote, Valuation, Fundamentals } from "@/types";
+import type {
+  Asset,
+  Income,
+  Position,
+  Settings,
+  MarketQuote,
+  Valuation,
+  Fundamentals,
+  AssetCatalog,
+  MarketCatalogQuote
+} from "@/types";
 
 const COLORS = ["#0f766e", "#f59e0b", "#475569", "#e11d48", "#0ea5e9", "#f97316"];
 
@@ -62,6 +74,8 @@ export default function DashboardPage() {
   const [quotes, setQuotes] = useState<MarketQuote[]>([]);
   const [valuations, setValuations] = useState<Valuation[]>([]);
   const [fundamentals, setFundamentals] = useState<Fundamentals[]>([]);
+  const [catalog, setCatalog] = useState<AssetCatalog[]>([]);
+  const [catalogQuotes, setCatalogQuotes] = useState<MarketCatalogQuote[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -76,7 +90,9 @@ export default function DashboardPage() {
         { data: settingsData, error: settingsError },
         { data: quotesData, error: quotesError },
         { data: valuationsData, error: valuationsError },
-        { data: fundamentalsData, error: fundamentalsError }
+        { data: fundamentalsData, error: fundamentalsError },
+        { data: catalogData, error: catalogError },
+        { data: catalogQuotesData, error: catalogQuotesError }
       ] = await Promise.all([
         fetchAssets(supabase),
         fetchPositions(supabase),
@@ -84,7 +100,9 @@ export default function DashboardPage() {
         fetchSettings(supabase),
         fetchMarketQuotes(supabase),
         fetchValuations(supabase),
-        fetchFundamentals(supabase)
+        fetchFundamentals(supabase),
+        fetchAssetCatalog(supabase),
+        fetchMarketCatalogQuotes(supabase)
       ]);
 
       if (
@@ -94,7 +112,9 @@ export default function DashboardPage() {
         settingsError ||
         quotesError ||
         valuationsError ||
-        fundamentalsError
+        fundamentalsError ||
+        catalogError ||
+        catalogQuotesError
       ) {
         setError("Não foi possível carregar o dashboard. Tente novamente.");
       }
@@ -106,6 +126,8 @@ export default function DashboardPage() {
       setQuotes(quotesData ?? []);
       setValuations(valuationsData ?? []);
       setFundamentals(fundamentalsData ?? []);
+      setCatalog(catalogData ?? []);
+      setCatalogQuotes(catalogQuotesData ?? []);
       setLoading(false);
     };
 
@@ -178,6 +200,21 @@ export default function DashboardPage() {
       return acc;
     }, {});
   }, [quotes]);
+
+  const catalogMap = useMemo(() => {
+    return catalog.reduce<Record<string, AssetCatalog>>((acc, item) => {
+      acc[item.id] = item;
+      return acc;
+    }, {});
+  }, [catalog]);
+
+  const latestCatalogQuoteMap = useMemo(() => {
+    return catalogQuotes.reduce<Record<string, MarketCatalogQuote>>((acc, quote) => {
+      const existing = acc[quote.catalog_id];
+      if (!existing || quote.date > existing.date) acc[quote.catalog_id] = quote;
+      return acc;
+    }, {});
+  }, [catalogQuotes]);
 
   const latestValuationMap = useMemo(() => {
     return valuations.reduce<Record<string, Valuation>>((acc, valuation) => {
@@ -292,6 +329,36 @@ export default function DashboardPage() {
     const dates = Object.values(latestQuoteMap).map((quote) => quote.date);
     return dates.sort().slice(-1)[0] || "";
   }, [latestQuoteMap]);
+
+  const marketRows = useMemo(() => {
+    return catalog.map((item) => {
+      const quote = latestCatalogQuoteMap[item.id];
+      const position52 =
+        quote?.price && quote.week_52_high && quote.week_52_low && quote.week_52_high !== quote.week_52_low
+          ? (Number(quote.price) - Number(quote.week_52_low)) /
+            (Number(quote.week_52_high) - Number(quote.week_52_low))
+          : null;
+      return {
+        ...item,
+        quote,
+        position52
+      };
+    });
+  }, [catalog, latestCatalogQuoteMap]);
+
+  const marketGainers = marketRows
+    .filter((row) => row.quote?.change_percent !== null && row.quote?.change_percent !== undefined)
+    .sort((a, b) => Number(b.quote?.change_percent ?? 0) - Number(a.quote?.change_percent ?? 0))
+    .slice(0, 5);
+
+  const marketLosers = marketRows
+    .filter((row) => row.quote?.change_percent !== null && row.quote?.change_percent !== undefined)
+    .sort((a, b) => Number(a.quote?.change_percent ?? 0) - Number(b.quote?.change_percent ?? 0))
+    .slice(0, 5);
+
+  const marketSnapshot = marketRows
+    .filter((row) => row.quote?.price !== null && row.quote?.price !== undefined)
+    .slice(0, 10);
 
   const maxAssetPct = Math.max(...Object.values(concentration), 0);
   const incomeDrop = calcIncomeDrop(incomes, 3);
@@ -513,6 +580,85 @@ export default function DashboardPage() {
           </div>
           <div className="card-body space-y-2 text-sm text-slate-600">
             {alerts.length ? alerts.map((alert) => <div key={alert}>• {alert}</div>) : "Tudo em ordem."}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <div className="card">
+          <div className="card-header">
+            <h3 className="text-sm font-semibold text-slate-900">Mercado - altas e baixas</h3>
+            <span className="text-xs text-slate-500">Catálogo</span>
+          </div>
+          <div className="card-body grid gap-4 md:grid-cols-2">
+            <div>
+              <p className="text-xs font-semibold text-slate-500">Altas</p>
+              <div className="mt-2 space-y-2 text-sm">
+                {marketGainers.length ? (
+                  marketGainers.map((item) => (
+                    <div key={item.id} className="flex items-center justify-between">
+                      <span>{item.ticker}</span>
+                      <span className="text-emerald-600">
+                        {formatPercent(Number(item.quote?.change_percent ?? 0) / 100)}
+                      </span>
+                    </div>
+                  ))
+                ) : (
+                  <span className="text-slate-500">Sem dados.</span>
+                )}
+              </div>
+            </div>
+            <div>
+              <p className="text-xs font-semibold text-slate-500">Baixas</p>
+              <div className="mt-2 space-y-2 text-sm">
+                {marketLosers.length ? (
+                  marketLosers.map((item) => (
+                    <div key={item.id} className="flex items-center justify-between">
+                      <span>{item.ticker}</span>
+                      <span className="text-rose-600">
+                        {formatPercent(Number(item.quote?.change_percent ?? 0) / 100)}
+                      </span>
+                    </div>
+                  ))
+                ) : (
+                  <span className="text-slate-500">Sem dados.</span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="card">
+          <div className="card-header">
+            <h3 className="text-sm font-semibold text-slate-900">Mercado - snapshot</h3>
+            <span className="text-xs text-slate-500">Top 10 do catálogo</span>
+          </div>
+          <div className="card-body">
+            <ResponsiveTable
+              data={marketSnapshot}
+              emptyLabel="Importe um catálogo para ver dados de mercado."
+              columns={[
+                { key: "ticker", label: "Ticker" },
+                {
+                  key: "price",
+                  label: "Preço",
+                  render: (row) => (row.quote?.price ? formatCurrency(Number(row.quote.price)) : "-")
+                },
+                {
+                  key: "change",
+                  label: "Variação",
+                  render: (row) =>
+                    row.quote?.change_percent !== null && row.quote?.change_percent !== undefined
+                      ? formatPercent(Number(row.quote.change_percent) / 100)
+                      : "-"
+                },
+                {
+                  key: "position52",
+                  label: "Faixa 52s",
+                  render: (row) =>
+                    row.position52 !== null && row.position52 !== undefined ? formatPercent(row.position52) : "-"
+                }
+              ]}
+            />
           </div>
         </div>
       </div>

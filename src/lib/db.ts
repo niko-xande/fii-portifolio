@@ -65,6 +65,10 @@ export const fetchMarketQuotes = async (supabase: SupabaseClient) => {
   return supabase.from("market_quotes").select("*").order("date", { ascending: false });
 };
 
+export const fetchMarketCatalogQuotes = async (supabase: SupabaseClient) => {
+  return supabase.from("market_catalog_quotes").select("*").order("date", { ascending: false });
+};
+
 export const fetchFundamentals = async (supabase: SupabaseClient) => {
   return supabase.from("fundamentals").select("*");
 };
