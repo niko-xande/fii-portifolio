@@ -1,4 +1,4 @@
-﻿-- FII-Portfolio schema
+-- FII-Portfolio schema
 create extension if not exists "pgcrypto";
 
 create table if not exists profiles (
@@ -128,3 +128,4 @@ create index if not exists idx_positions_user_id on positions(user_id);
 create index if not exists idx_incomes_user_id on incomes(user_id);
 create index if not exists idx_valuations_user_id on valuations(user_id);
 create index if not exists idx_settings_user_id on settings(user_id);
+

@@ -72,12 +72,18 @@ export default function AnalisesPage() {
   const [catalogQuotes, setCatalogQuotes] = useState<MarketCatalogQuote[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [updatingMarket, setUpdatingMarket] = useState(false);
+  const [updateMessage, setUpdateMessage] = useState<string | null>(null);
+  const [updateError, setUpdateError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState({ ...emptyForm });
   const [filter, setFilter] = useState("todos");
 
-  const load = async () => {
-    setLoading(true);
+  const load = async (options?: { silent?: boolean }) => {
+    const silent = options?.silent ?? false;
+    if (!silent) {
+      setLoading(true);
+    }
     setError(null);
     const [
       { data: assetsData, error: assetsError },
@@ -124,7 +130,9 @@ export default function AnalisesPage() {
     setSettings(settingsData ?? null);
     setCatalog(catalogData ?? []);
     setCatalogQuotes(catalogQuotesData ?? []);
-    setLoading(false);
+    if (!silent) {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -367,17 +375,68 @@ export default function AnalisesPage() {
     await load();
   };
 
+  const handleUpdateMarket = async () => {
+    setUpdatingMarket(true);
+    setUpdateError(null);
+    setUpdateMessage(null);
+
+    const { data, error: updateError } = await supabase.functions.invoke("update-market-quotes", { body: {} });
+
+    if (updateError) {
+      setUpdateError(updateError.message || "Não foi possível atualizar as cotações agora.");
+      setUpdatingMarket(false);
+      return;
+    }
+
+    const payload = data as
+      | {
+          updatedAssets?: number;
+          updatedCatalog?: number;
+          updatedValuations?: number;
+          tickers?: number;
+          message?: string;
+        }
+      | null;
+
+    if (payload?.message) {
+      setUpdateMessage(payload.message);
+    } else if (payload) {
+      const updatedAssets = payload.updatedAssets ?? 0;
+      const updatedCatalog = payload.updatedCatalog ?? 0;
+      const updatedValuations = payload.updatedValuations ?? 0;
+      const tickers = payload.tickers ?? 0;
+      setUpdateMessage(
+        `Atualizado: ${updatedAssets} ativos, ${updatedCatalog} catálogo, ${updatedValuations} valuations (tickers: ${tickers}).`
+      );
+    } else {
+      setUpdateMessage("Atualização concluída.");
+    }
+
+    await load({ silent: true });
+    setUpdatingMarket(false);
+  };
+
   if (loading) return <LoadingState />;
   if (error) return <ErrorState title={error} />;
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-xl font-semibold text-slate-900">Análises</h2>
-        <p className="text-sm text-slate-500">
-          Score por renda, estabilidade e risco. Última atualização: {lastQuoteDate || "manual"}.
-        </p>
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h2 className="text-xl font-semibold text-slate-900">Análises</h2>
+          <p className="text-sm text-slate-500">
+            Score por renda, estabilidade e risco. Última atualização: {lastQuoteDate || "manual"}.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button className="btn btn-secondary" onClick={handleUpdateMarket} disabled={updatingMarket}>
+            {updatingMarket ? "Atualizando..." : "Atualizar agora"}
+          </button>
+        </div>
       </div>
+
+      {updateError ? <div className="text-sm text-rose-600">{updateError}</div> : null}
+      {updateMessage ? <div className="text-sm text-emerald-700">{updateMessage}</div> : null}
 
       <div className="flex flex-wrap gap-2">
         {[

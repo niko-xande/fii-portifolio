@@ -1,7 +1,8 @@
 ﻿## Atualização diária de mercado (opcional)
 
-Para ter preços diários de FIIs no app, use a Edge Function `update-market-quotes`.
-Ela consulta uma API externa (ex.: brapi) e grava na tabela `market_quotes`.
+Para ter preços diários e P/VP automaticamente no app, use a Edge Function `update-market-quotes`.
+Ela consulta uma API externa (ex.: brapi), grava na tabela `market_quotes` e
+preenche a tabela `valuations` com **preço**, **VP por cota** e **P/VP** quando disponíveis.
 
 ### 1) Deploy da Edge Function
 ```bash
@@ -14,6 +15,7 @@ No painel do Supabase (Project Settings > Edge Functions > Secrets) configure:
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `BRAPI_TOKEN` (opcional, mas recomendado para FIIs)
 - `BRAPI_BASE_URL` (opcional; padrão: https://brapi.dev/api/quote)
+- `BRAPI_MODULES` (opcional; padrão: defaultKeyStatistics)
 
 > A service_role **nunca** deve ir para o frontend.
 

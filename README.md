@@ -77,7 +77,8 @@ Configure as variáveis no Render e defina:
 - Revise regras no Supabase para evitar acesso indevido.
 
 ## 8) Atualização diária de mercado (opcional)
-Para preços diários (ex.: FIIs), use a Edge Function `update-market-quotes` que consome API externa e salva em `market_quotes`.
+Para preços diários e P/VP automático (ex.: FIIs), use a Edge Function `update-market-quotes` que consome API externa,
+salva em `market_quotes` e preenche `valuations` com **preço**, **VP por cota** e **P/VP**.
 
 Resumo rápido:
 - Deploy da função: `supabase functions deploy update-market-quotes`
