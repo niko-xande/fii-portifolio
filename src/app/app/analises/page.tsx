@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { getSupabaseBrowser } from "@/lib/supabaseClient";
+import { useAuth } from "@/lib/auth";
 import {
   fetchAssets,
   fetchFundamentals,
@@ -61,6 +62,7 @@ const rendaTarget = 0.12;
 
 export default function AnalisesPage() {
   const supabase = getSupabaseBrowser();
+  const { user } = useAuth();
   const [assets, setAssets] = useState<Asset[]>([]);
   const [positions, setPositions] = useState<Position[]>([]);
   const [incomes, setIncomes] = useState<Income[]>([]);
@@ -136,8 +138,21 @@ export default function AnalisesPage() {
   };
 
   useEffect(() => {
+    if (!user) return;
     load();
-  }, []);
+  }, [user]);
+
+  useEffect(() => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
+        load({ silent: true });
+      }
+    });
+
+    return () => {
+      listener.subscription.unsubscribe();
+    };
+  }, [supabase]);
 
   const positionMap = useMemo(() => {
     return positions.reduce<Record<string, Position>>((acc, pos) => {
