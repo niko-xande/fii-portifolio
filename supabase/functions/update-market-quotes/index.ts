@@ -6,6 +6,7 @@ const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 const brapiToken = Deno.env.get("BRAPI_TOKEN") ?? "";
 const brapiBaseUrl = Deno.env.get("BRAPI_BASE_URL") ?? "https://brapi.dev/api/quote";
 const brapiModules = Deno.env.get("BRAPI_MODULES") ?? "defaultKeyStatistics";
+const corsOrigins = Deno.env.get("CORS_ORIGINS") ?? "*";
 
 if (!supabaseUrl || !serviceRoleKey) {
   console.error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
@@ -64,6 +65,25 @@ const getPriceToBook = (quote: QuoteResult) => {
   );
 };
 
+const allowedOrigins = corsOrigins
+  .split(",")
+  .map((item) => item.trim())
+  .filter(Boolean);
+
+const resolveOrigin = (origin: string | null) => {
+  if (!origin) return "*";
+  if (allowedOrigins.includes("*")) return "*";
+  if (allowedOrigins.includes(origin)) return origin;
+  return allowedOrigins[0] ?? origin;
+};
+
+const corsHeaders = (origin: string | null) => ({
+  "Access-Control-Allow-Origin": resolveOrigin(origin),
+  "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info, accept",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Max-Age": "86400"
+});
+
 const fetchQuote = async (ticker: string): Promise<QuoteResult | null> => {
   const url = new URL(`${brapiBaseUrl}/${ticker}`);
   if (brapiToken) {
@@ -91,7 +111,17 @@ const fetchQuote = async (ticker: string): Promise<QuoteResult | null> => {
   return result as QuoteResult;
 };
 
-Deno.serve(async () => {
+Deno.serve(async (req) => {
+  const origin = req.headers.get("Origin");
+  const responseHeaders = {
+    ...corsHeaders(origin),
+    "Content-Type": "application/json"
+  };
+
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { status: 204, headers: responseHeaders });
+  }
+
   try {
     const [{ data: assets, error: assetsError }, { data: catalog, error: catalogError }] = await Promise.all([
       supabase.from("assets").select("id, user_id, ticker"),
@@ -99,7 +129,10 @@ Deno.serve(async () => {
     ]);
 
     if (assetsError || catalogError) {
-      return new Response(JSON.stringify({ error: assetsError?.message || catalogError?.message }), { status: 500 });
+      return new Response(JSON.stringify({ error: assetsError?.message || catalogError?.message }), {
+        status: 500,
+        headers: responseHeaders
+      });
     }
 
     const assetRows = assets ?? [];
@@ -110,7 +143,7 @@ Deno.serve(async () => {
     );
 
     if (!uniqueTickers.length) {
-      return new Response(JSON.stringify({ message: "No tickers found" }), { status: 200 });
+      return new Response(JSON.stringify({ message: "No tickers found" }), { status: 200, headers: responseHeaders });
     }
 
     const quotesByTicker: Record<string, QuoteResult> = {};
@@ -206,7 +239,7 @@ Deno.serve(async () => {
         .upsert(assetQuotes, { onConflict: "user_id,asset_id,date" });
 
       if (upsertError) {
-        return new Response(JSON.stringify({ error: upsertError.message }), { status: 500 });
+        return new Response(JSON.stringify({ error: upsertError.message }), { status: 500, headers: responseHeaders });
       }
     }
 
@@ -216,7 +249,10 @@ Deno.serve(async () => {
         .upsert(catalogQuotes, { onConflict: "user_id,catalog_id,date" });
 
       if (catalogUpsertError) {
-        return new Response(JSON.stringify({ error: catalogUpsertError.message }), { status: 500 });
+        return new Response(JSON.stringify({ error: catalogUpsertError.message }), {
+          status: 500,
+          headers: responseHeaders
+        });
       }
     }
 
@@ -231,7 +267,10 @@ Deno.serve(async () => {
         .in("date", dates);
 
       if (existingValuationsError) {
-        return new Response(JSON.stringify({ error: existingValuationsError.message }), { status: 500 });
+        return new Response(JSON.stringify({ error: existingValuationsError.message }), {
+          status: 500,
+          headers: responseHeaders
+        });
       }
 
       const existingMap = new Set(
@@ -248,7 +287,10 @@ Deno.serve(async () => {
           .insert(valuationsToInsert);
 
         if (valuationInsertError) {
-          return new Response(JSON.stringify({ error: valuationInsertError.message }), { status: 500 });
+          return new Response(JSON.stringify({ error: valuationInsertError.message }), {
+            status: 500,
+            headers: responseHeaders
+          });
         }
 
         updatedValuations = valuationsToInsert.length;
@@ -262,9 +304,9 @@ Deno.serve(async () => {
         updatedValuations,
         tickers: Object.keys(quotesByTicker).length
       }),
-      { status: 200 }
+      { status: 200, headers: responseHeaders }
     );
   } catch (err) {
-    return new Response(JSON.stringify({ error: String(err) }), { status: 500 });
+    return new Response(JSON.stringify({ error: String(err) }), { status: 500, headers: responseHeaders });
   }
 });
